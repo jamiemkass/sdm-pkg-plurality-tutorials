@@ -1,6 +1,6 @@
 # Supplemental Information for "Achieving higher standards in species distribution modeling by leveraging the diversity of available software"
 
-There are many tools for species distribution modeling in R, so many in fact that sorting through them and deciding which to use for what can be an overwhelming exercise. This repository provides three vignettes and associated data as supplemental information to Kass et al. 2024 (in review) that highlight how pluralistic use of R package tools can enhance analyses. All vignettes present full SDM analyses from data collection and processing to model building and predictions, and two of them provide walkthroughs for shiny applications. This repository also provides code and data to reproduce Figures 2 and S1 from the manuscript.
+There are many tools for species distribution modeling in R, so many in fact that sorting through them and deciding which to use for what can be an overwhelming exercise. This repository provides three vignettes and associated data as supplemental information to  [Kass et al. (2024)](https://www.doi.org/10.1111/ecog.07346) that highlight how pluralistic use of R package tools can enhance analyses. All vignettes present full SDM analyses from data collection and processing to model building and predictions, and two of them provide walkthroughs for shiny applications. This repository also provides code and data to reproduce Figures 2 and S1 from the manuscript.
 
 ## Project leaders
 
