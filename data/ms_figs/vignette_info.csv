@@ -1,0 +1,49 @@
+﻿standards,deficient,bronze,silver,gold,packages,vignettes
+1A,,X,,,"flexSDM, ntbox, spThin",Invasive Species
+1B,,X,,,,Invasive Species
+1C,,,X,,CoordinateCleaner,Invasive Species
+1D,,X,,,ENMeval,Invasive Species
+1E,,,X,,"bracatus, flexSDM",Invasive Species
+2A,,X,,,,Invasive Species
+2B,,X,,,,Invasive Species
+2C,X,,,,,Invasive Species
+3A,,,X,,"ENMeval, ntbox",Invasive Species
+3B,,X,,,flexSDM,Invasive Species
+3C,,X,,,"ntbox, usdm",Invasive Species
+3D,,,,X,modleR,Invasive Species
+4A,X,,,,,Invasive Species
+4B,,,X,,ENMeval ,Invasive Species
+4C,,,X,,"ENMeval, modleR, ntbox",Invasive Species
+Metadata,-,-,-,-,ODMAP,Invasive Species
+1A,,X,,,sampbias,Rare Species
+1B,X,,,,,Rare Species
+1C,,,X,,,Rare Species
+1D,,X,,,SDMtune,Rare Species
+1E,,X,,,"SSDM, terra, wallace ",Rare Species
+2A,,X,,,,Rare Species
+2B,,X,,,,Rare Species
+2C,X,,,,,Rare Species
+3A,,,X,,"ecospat, enmSdmX, SDMtune, SSDM, wallace",Rare Species
+3B,,,X,,sampbias,Rare Species
+3C,,,X,,SDMtune,Rare Species
+3D,,,X,,"ecospat, enmSdmX, SDMtune, SSDM, wallace",Rare Species
+4A,X,,,,,Rare Species
+4B,,,X,,"SDMtune, wallace",Rare Species
+4C,,X,,,"ecospat, enmSdmX, SDMtune, wallace",Rare Species
+Metadata,-,-,-,-,"rangeModelMetadata, wallace",Rare Species
+1A,,X,,,"ENMTools, occCite",Climate Change
+1B,X,,,,,Climate Change
+1C,,,X,,"fuzzySim, occCite",Climate Change
+1D,,X,,,ENMTools,Climate Change
+1E,,X,,,"biomod2, ENMTools",Climate Change
+2A,,X,,,,Climate Change
+2B,,X,,,,Climate Change
+2C,X,,,,,Climate Change
+3A,,X,,,vip,Climate Change
+3B,,X,,,ENMTools,Climate Change
+3C,,X,,,"ENMTools, vip",Climate Change
+3D,,,,X,"biomod2, ENMTools, fuzzySim",Climate Change
+4A,X,,,,,Climate Change
+4B,,,X,,blockCV,Climate Change
+4C,,,X,,"biomod2, ENMTools, modEva",Climate Change
+Metadata,-,-,-,-,occCite,Climate Change

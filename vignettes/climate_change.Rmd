@@ -1,0 +1,1223 @@
+---
+title: "Demonstrating SDM methods using North American moose"
+author:
+  - Dan L. Warren
+  - A. Márcia Barbosa
+  - Maya Guéguen
+  - Hannah L. Owens
+  - Roozbeh Valavi
+bibliography:
+  - references.bib
+  - r-pkgs.bib
+csl: https://www.zotero.org/styles/ecography
+link-citations: yes
+urlcolor: blue
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    df_print: tibble
+    fig_crop: false
+    extra_dependencies: ["float"]
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      out.width = "100%",
+                      fig.align = "center",
+                      fig.height = 4.5,
+                      fig.width = 6.5,
+                      fig.pos = "H")
+
+# Show messages and warnings in interactive mode
+if (!interactive()) {
+  knitr::opts_chunk$set(message = FALSE,
+                        warning = FALSE)
+}
+```
+
+
+# Introduction
+
+In this vignette, we will show you the basics of how to download data, build a model, evaluate that model, and project it to a future climate scenario. There are many ways to implement a workflow for this purpose, but here we focus on showcasing methods for moving between packages for different purposes.
+
+
+# Packages
+
+Modeling packages:
+
+* `dismo` v-`r packageVersion("dismo")` (CRAN): basic functions for SDMing [@pkg-dismo];
+* `ENMTools` v-`r packageVersion("ENMTools")` (CRAN): tools to implement SDM workflows and visualizations with emphasis on analyses for niche evolution [@pkg-ENMTools; @ENMTools2021];
+* `vip` v-`r packageVersion("vip")` (CRAN): methods to estimate model variable importance [@pkg-vip; @vip2020];
+* `blockCV` v-`r packageVersion("blockCV")` (CRAN): generates spatially or environmentally separated folds for cross-validation of species distribution models [@pkg-blockCV; @blockCV2019]
+* `fuzzySim` v-`r packageVersion("fuzzySim")` (CRAN): implements fuzzy logic versions of species' distribution patterns, favorability functions, and similarity metrics [@pkg-fuzzySim; @fuzzySim2015]
+* `modEvA` v-`r packageVersion("modEvA")` (CRAN): functions for evaluating performance of SDMs [@pkg-modEvA; @modEvA2013]
+* `biomod2` v-`r packageVersion("biomod2")` (CRAN): SDM workflow and ensemble modeling [@pkg-biomod2; @biomod22009]
+
+Packages for getting data:
+
+* `spocc` v-`r packageVersion("spocc")` (CRAN): queries multiple occurrence databases [@pkg-spocc]
+* `occCite` v-`r packageVersion("occCite")` (CRAN): downloads occurrence data with detailed metadata and generates citations [@pkg-occCite; @occCite2021];
+* `rgbif` v-`r packageVersion("rgbif")` (CRAN): interfaces with the Global Biodiversity Information Facility's online data resources [@pkg-rgbif; @rgbif2017];
+* `geodata` v-`r packageVersion("geodata")` (CRAN): access to many environmental datasets [@pkg-geodata]
+* `rnaturalearth` v-`r packageVersion("rnaturalearth")` (CRAN): world boundary data for coastlines and countries [@pkg-rnaturalearth]
+
+Packages for handling spatial data:
+
+* `terra` v-`r packageVersion("terra")` (CRAN): for handling both raster and vector spatial data [@pkg-terra]
+* `sf` v-`r packageVersion("sf")` (CRAN): for handling vector spatial data [@pkg-sf; @sf2023]
+
+Packages for computing and plotting:
+
+* `dplyr` v-`r packageVersion("dplyr")` (CRAN) and `tidyr` v-`r packageVersion("tidyr")` (CRAN): wrangling data [@pkg-dplyr; @pkg-tidyr]
+* `ggplot2` v-`r packageVersion("ggplot2")` (CRAN): plotting tools [@pkg-ggplot2; @ggplot22016]
+* `cowplot` v-`r packageVersion("cowplot")` (CRAN): to aggregate multiple plots together [@pkg-cowplot]
+
+Load required packages:
+
+```{r initial-settings}
+library(ggplot2)
+
+# Set default color palette for terra plots
+options(terra.pal = rev(terrain.colors(255)))
+
+# Set seed to reproduce random processes
+set.seed(123)
+```
+
+
+# Obtain data
+
+## Occurrence data
+
+In this exercise, we will focus on the North American moose, *Alces alces*. We will start by downloading occurrence data from the Global Biodiversity Information Facility, GBIF. To do this, you first need to create a user profile on [gbif.org](gbif.org). Here is a dummy login to show you the format.
+
+```{r gbif-login-example, eval=FALSE}
+gbif_login <- occCite::GBIFLoginManager(user = "BullwinkleJMoose",
+                                        email = "MooseB@WossamattaU.edu",
+                                        pwd = "12345")
+```
+
+Next, we can use the `occCite` package [@pkg-occCite; @occCite2021] to download the data from GBIF with all the associated metadata (including primary data providers) and a DOI for reproducibility. We will run the `occQuery` function and enter our GBIF login and a species name (`occCite` can also accommodate a vector of species names, or a phylogeny object of class `phylo` with desired species names at the tips). `GBIFDownloadDirectory` specifies the local directory where downloads will be saved. The `checkPreviousGBIFDownload` argument looks in the GBIF server to see if the desired occurrence dataset was already prepared (*e.g.*, if you searched for moose last week and do not need a fresh version of the dataset). If you previously downloaded a GBIF dataset onto your local machine, you can also pass the argument `loadLocalGBIFDownload = TRUE` to skip downloading the data from the GBIF server again (*e.g.*, if you have a limited internet connection). As a note, `occCite` does some data-cleaning, so the data it returns may be different from a raw GBIF download (see `?occQuery` for details).
+
+```{r occCite-data-download, eval=FALSE}
+moose_occs <- occCite::occQuery(
+  x = "Alces alces",
+  datasources = "gbif",
+  GBIFLogin = gbif_login,
+  GBIFDownloadDirectory = "../data/climate_change_data",
+  checkPreviousGBIFDownload = TRUE
+)
+
+summary(moose_occs)
+```
+
+We have already downloaded the data returned by `occCite`, and here we load it. We could also use the download key it returns and `rgbif` [@pkg-rgbif] to retrieve our data [@climate-change-data], ensuring that the results of the vignette do not change as new data is added to GBIF, but here we will load the `occCite` object to demonstrate its structure and features.
+
+```{r occCite-data-load}
+moose_occs <- readRDS("../data/climate_change_data/moose_occs.rds")
+
+summary(moose_occs)
+```
+
+That are a **lot** of points (`r format(nrow(moose_occs@occResults[[1]]$GBIF$OccurrenceTable), big.mark = ",")` to be exact), and many of them probably are not of great quality. Let's restrict ourselves to points that were collected later than 1995, have coordinate uncertainty of less than 100 meters, and have a longitude of less than -45 (*i.e.*, North America only).
+
+```{r filter-records, fig.height=2}
+filtered_occs_first_pass <- moose_occs@occResults[[1]]$GBIF$OccurrenceTable |>
+  dplyr::filter(year > 1990,
+                uncertaintyInMeters < 100,
+                longitude < -45)
+
+ggplot(data = filtered_occs_first_pass,
+       mapping = aes(x = uncertaintyInMeters)) +
+  geom_histogram(bins = 10) +
+  labs(x = "Uncertainty in meters",
+       y = "Count") +
+  theme_minimal()
+```
+
+We can also use the `fuzzySim::cleanCoords()` function to remove the most common errors in biodiversity databases, such as missing, duplicated, impossible, or unlikely coordinates, as well as overly uncertain coordinates, which were already removed above.
+
+```{r cleanCoords, fig.height=2}
+filtered_occs <- fuzzySim::cleanCoords(filtered_occs_first_pass,
+                                       coord.cols = c("longitude", "latitude"),
+                                       uncert.col = "uncertaintyInMeters",
+                                       plot = FALSE)
+```
+
+`occCite` provides some of its own functions for visualizing data sources. Let's see where our moose records are from.
+
+```{r occCite-data-visualization, results='hide', fig.width=5.5, fig.height=3.5}
+plot(moose_occs,
+     plotTypes = c("yearHistogram", "source"))
+```
+
+`occCite` also helps users cite data downloaded from GBIF according to best practices&mdash;that is, citing all the contributors to the dataset, with DOIs and the date on which GBIF was accessed. We can get the citations for the dataset from GBIF and write this metadata to file.
+
+```{r occCite-data-citation, eval=FALSE}
+moose_citations <- occCite::occCitation(moose_occs)
+
+sink("../data/climate_change_data/mooseOccurrenceCitations.txt")
+
+print(moose_citations)
+
+sink()
+```
+
+Now that we have the metadata we need regarding our occurrence points, we will save the filtered occurrence table as a .csv file for our records (and supplementary information).
+
+```{r occurrence-data-simplification}
+write.csv(filtered_occs,
+          file = "../data/climate_change_data/filtered_occs.csv",
+          row.names = FALSE)
+```
+
+## Environmental data
+
+Now we need to load in some environmental raster maps for modeling. We will use the WorldClim rasters of the bioclim variables, and we will download them using the `worldclim_global` function from the `geodata` package [@pkg-geodata].
+
+```{r raster-data, fig.height=4}
+envs_terra <- geodata::worldclim_global(var = "bio",
+                                        res = 10,
+                                        path = "../data",
+                                        version = "2.1")
+
+# For readability, simplify the variable names
+names(envs_terra) <- sub("^.+(bio)_(\\d+)$", "\\1\\2", names(envs_terra))
+
+envs_terra <- envs_terra |>
+  terra::crop(c(-175, -45, 20, 100))
+
+terra::plot(envs_terra[[1]])
+
+terra::points(filtered_occs[, c("longitude", "latitude")],
+              pch = 16)
+```
+
+Later, once we have a final model, we will want to project it to the future. For this we will need to repeat the steps above but for a set of variables based on a future climate scenario.
+
+```{r raster-future-data, fig.height=4}
+future_envs_terra <- geodata::cmip6_world(model = "CNRM-CM6-1",
+                                          ssp = "585",
+                                          time = "2061-2080",
+                                          var = "bioc",
+                                          res = 10,
+                                          path = paste0("../data",
+                                                        "/climate_change_data",
+                                                        "/future"))
+
+# The future bioclim layers have leading zeroes for some layer names that need
+# to be removed to match the present-day layer names
+names(future_envs_terra) <- sub("bio0", "bio", names(future_envs_terra))
+
+future_envs_terra <- future_envs_terra |>
+  terra::crop(c(-175, -45, 20, 100))
+
+terra::plot(future_envs_terra[[1]])
+
+terra::points(filtered_occs[, c("longitude", "latitude")],
+              pch = 16)
+```
+
+
+# Data exploration and cleaning
+
+## Removing duplicate occurrences
+
+In order to deal with the effects of spatial sampling biases, SDM users often take steps to remove duplicate occurrences. This can be done either by removing exact duplicates (same latitude and longitude, which was one of the procedures applied by `fuzzySim::cleanCoords()` above) or by trimming the data set so that there is at most one point per grid cell (pixel) for the raster layers we are going to use. We will do the latter using the first layer of our environmental raster stack.
+
+```{r trim-occs}
+moose_occs_trim <- terra::vect(filtered_occs,
+                               geom = c("longitude", "latitude"),
+                               crs = "epsg: 4326") |>
+  ENMTools::trimdupes.by.raster(mask = envs_terra[[1]])
+```
+
+You may also want to look at the `fuzzySim::gridRecords()` function for a similar procedure.
+
+## Buffering the points for the study area
+
+For many modeling approaches we need to define a study area from which background or pseudo-absence points will be drawn for modeling. There are many ways to do this, but for now we will draw circular buffers around our occurrence points with a radius of 250 km.
+
+```{r point-buf, fig.height=4}
+moose_occs_buf <- terra::buffer(moose_occs_trim,
+                                width = 250000) |>
+  terra::aggregate()
+
+study_area <- terra::rasterize(moose_occs_buf,
+                               envs_terra[[1]],
+                               field = 1) |>
+  terra::mask(envs_terra[[1]])
+
+terra::plot(envs_terra[[1]])
+
+terra::plot(study_area,
+            col = "red",
+            add = TRUE,
+            legend = FALSE)
+
+terra::points(moose_occs_trim)
+```
+
+## Correlations between environmental predictors
+
+We often want to remove environmental rasters that are overly correlated with each other, particularly when we are going to build models using an approach that does not include any built-in feature selection. A good place to start is to visualize correlations between environmental predictors across our study area.
+
+```{r var-corplot-1, fig.width=5, fig.height=3}
+corplots <- ENMTools::raster.cor.plot(envs_terra)
+
+corplots$cor.mds.plot
+```
+
+```{r var-corplot-2, fig.width=4, fig.height=3}
+corplots$cor.heatmap
+```
+
+The first plot uses the correlations between our predictors as a distance metric and then plots all of our predictors in a 2D space such that the most highly correlated predictors are plotted close together. This is only an approximation, however, and it is good to look at the heatmap for more precise comparisons.\
+We are not going to eliminate any predictors at this stage. Instead we will build a starting model and use that to suggest which predictors might be most important to retain.
+
+
+# Modeling
+
+## Generalized linear model
+
+### Extracting environmental conditions at occurrence and background points
+
+```{r bg-pts}
+moose_points <- terra::crds(moose_occs_trim)
+
+colnames(moose_points) <- c("Longitude", "Latitude")
+
+background_points <- terra::spatSample(study_area,
+                                       size = nrow(moose_points),
+                                       xy = TRUE,
+                                       na.rm = TRUE,
+                                       values = FALSE) |>
+  as.data.frame() |>
+  # Match the names with presence points
+  setNames(c("Longitude", "Latitude"))
+
+model_data <- rbind(moose_points, background_points)
+
+model_data <- cbind(model_data, terra::extract(envs_terra,
+                                               model_data,
+                                               ID = FALSE)) |>
+  as.data.frame() |>
+  # Create 0 and 1 response; orders should matches with bind_rows
+  dplyr::mutate(pa = c(rep(1, nrow(moose_points)),
+                       rep(0, nrow(background_points)))) |>
+  # Drop the NA values
+  tidyr::drop_na()
+```
+
+### Variable selection
+
+We have a lot of multicollinearity among those variables, so for most modeling applications we will want to omit some of them. There are many ways to do that, and here we will showcase a few popular ones.
+
+### Variable importance plots
+
+One way to select a subset of variables is to build a complex model and then use Shapley values (or permutation-based vip scores). For starters we will do a quick generalized linear model (GLM) with quadratic and linear terms for all variables.
+
+```{r glm}
+start_glm <- glm(pa ~ poly(bio1, 2) + poly(bio2, 2) + poly(bio3, 2) +
+                   poly(bio4, 2) + poly(bio5, 2) + poly(bio6, 2) +
+                   poly(bio7, 2) + poly(bio8, 2) + poly(bio9, 2) +
+                   poly(bio10, 2) + poly(bio11, 2) + poly(bio12, 2) +
+                   poly(bio13, 2) + poly(bio14, 2) + poly(bio15, 2) +
+                   poly(bio16, 2) + poly(bio17, 2) + poly(bio18, 2) +
+                   poly(bio19, 2),
+                 data = model_data,
+                 family = "binomial")
+
+summary(start_glm)
+```
+
+Then we can use the `vip` package to get **Shapley** scores for each variable.
+
+```{r glm-vip}
+vip::vip(start_glm,
+         method = "shap",
+         pred_wrapper = predict,
+         num_features = 19L,
+         train = model_data)
+```
+
+Given these results and the correlation plots above, we should likely eliminate some variables. Let's look at the raster correlations inside the study area.
+
+```{r study-cor-plots-1, fig.width=5, fig.height=3}
+study_envs_terra <- terra::mask(envs_terra, study_area)
+
+study_corplots <- ENMTools::raster.cor.plot(study_envs_terra)
+
+study_corplots$cor.mds.plot
+```
+
+```{r study-cor-plots-2, fig.width=4, fig.height=3}
+study_corplots$cor.heatmap
+```
+
+```{r study-cor-matrix}
+ENMTools::raster.cor.matrix(study_envs_terra)
+```
+
+Most of these variables are not contributing very much to the overall fit of the model, so let's take them out. Additionally, variables bio6 (min temperature of coldest month) and bio7 (temperature annual range) are fairly correlated in the study area, so we will remove one of those. We will keep bio6 because bio7 is calculated by subtracting bio5 (max temperature of warmest month) from bio6. This is not the only way to do this, however. Alternatively, you could also consider using the `fuzzySim::corSelect()` function for suggestions on which variable to exclude for each correlated pair under a number of criteria. Now we will build a smaller model and see how that looks.
+
+```{r glm2, fig.height=1.5}
+moose_glm <- glm(pa ~ poly(bio5, 2) + poly(bio6, 2),
+                 data = model_data,
+                 family = "binomial")
+
+summary(moose_glm)
+
+vip::vip(moose_glm,
+         method = "shap",
+         pred_wrapper = predict,
+         train = model_data)
+```
+
+Let's compare the predictions made from the full and reduced model. Note that R may complain about making predictions from the full model because it is overparameterized. We can tolerate that for the moment, as we are not really using that model for anything but variable selection.
+
+```{r glm-complexity, fig.height=4}
+start_glm_prediction <- terra::predict(envs_terra,
+                                       model = start_glm,
+                                       type = "response")
+terra::plot(start_glm_prediction,
+            main = "Starting Model")
+
+terra::points(moose_points,
+              pch = 16,
+              cex = 0.5)
+
+moose_glm_prediction <- terra::predict(envs_terra,
+                                       model = moose_glm,
+                                       type = "response")
+
+terra::plot(moose_glm_prediction,
+            main = "Reduced Model")
+
+terra::points(moose_points,
+              pch = 16,
+              cex = 0.5)
+```
+
+To make predictions independent of the prevalence (proportion of presences) used in the model, we can convert them to indices of environmental favorability [@real2006]. Note that the result will not change if the numbers of presences and absences in the model were already the same.
+
+```{r favorability, fig.height=4}
+start_glm_fav <- fuzzySim::Fav(
+  pred = start_glm_prediction,
+  sample.preval = fuzzySim::prevalence(model = start_glm)
+)
+
+moose_glm_fav <- fuzzySim::Fav(
+  pred = moose_glm_prediction,
+  sample.preval = fuzzySim::prevalence(model = moose_glm)
+)
+
+terra::plot(start_glm_fav,
+            main = "Starting Model Favorability")
+
+terra::plot(moose_glm_fav,
+            main = "Reduced Model Favorability")
+```
+
+### Predicting the effects of climate change
+
+Now that we have a model, let's see how to project it onto a future climate scenario. We downloaded the future climate data above, and projecting our model to the future is simply a matter of using the `predict()` function.
+
+```{r project-glm, fig.height=4}
+future_pred <- terra::predict(future_envs_terra,
+                              moose_glm,
+                              type = "response")
+
+terra::plot(future_pred, main = "Future probability")
+
+future_fav <- fuzzySim::Fav(
+  pred = future_pred,
+  sample.preval = fuzzySim::prevalence(model = moose_glm)
+)
+
+terra::plot(future_fav,
+            main = "Future favorability")
+```
+
+### Assessing potential range change
+
+An interesting thing to quantify is the overall range change (expansion, contraction, maintenance) predicted by the model between time periods. We could first make the model predictions binary (which would involve choosing a threshold value to separate continuous model predictions into presence and absence) and then count the number of gained, lost, and maintained presences according to the model predictions. Alternatively, we can use fuzzy logic on the continuous predictions directly to avoid making all our further results conditional on a subjective threshold choice.
+
+```{r fuzzy-range-change}
+fuzzySim::fuzzyRangeChange(terra::values(moose_glm_fav),
+                           terra::values(future_fav))
+```
+
+### Measuring prediction accuracy
+
+One of the primary ways we measure model fit is by quantifying how well a model distinguishes between presence points and background data. For the above approach we have not set aside any data for testing, so here we are just evaluating predictions on the data used to fit the model.
+
+```{r eval, fig.width=3, fig.height=3.2}
+train_eval <- dismo::evaluate(p = moose_points,
+                              a = background_points,
+                              model = moose_glm,
+                              x = envs_terra,
+                              type = "response")
+
+par(mar = c(3.5, 3.5, 2.5, 1),
+    mgp = c(2, 1, 0))
+
+dismo::plot(train_eval, "ROC")
+```
+
+We can also use the `modEvA` package [@pkg-modEvA; @modEvA2013] to compute a range of evaluation metrics, including the AUC of the ROC or of the precision-recall curve. The latter may be more meaningful for low-prevalence datasets (e.g. rare species), for which the ROC curve tends to be overly optimistic due to the high number of correctly predicted absences.
+
+```{r modEvA-AUC-and-AUC-PR, results='hide', fig.height=3.8}
+par(mfrow = c(1, 2),
+    mar = c(6, 4, 2, 1))
+
+modEvA::AUC(model = moose_glm,
+            curve = "ROC",
+            main = "ROC curve",
+            interval = 0.001)
+
+modEvA::AUC(model = moose_glm,
+            curve = "PR",
+            main = "Precision-recall curve",
+            interval = 0.001)
+```
+
+We can compute a range of threshold-based metrics and their optimal thresholds (see various options for the 'thresh' argument in `?threshMeasures`):
+
+```{r optiThresh, results='hide'}
+metrics <- c("CCR",
+             "Sensitivity",
+             "Specificity",
+             "Omission",
+             "Commission",
+             "Precision",
+             "Recall",
+             "kappa",
+             "TSS")
+
+modEvA::optiThresh(model = moose_glm,
+                   measures = metrics,
+                   pch = 20,
+                   cex = 0.1)
+```
+
+```{r optithreshMeasures, results='hide', fig.height=4}
+modEvA::threshMeasures(model = moose_glm,
+                       measures = metrics,
+                       thresh = "maxTSS",
+                       standardize = FALSE,
+                       cex.axis = 0.8,
+                       main = "Threshold-based metrics")
+```
+
+We can also compare the densities of predicted values for presences vs. absences:
+
+```{r predPlot-predDensity, results='hide'}
+par(mfrow = c(1, 2))
+
+modEvA::predPlot(model = moose_glm,
+                 main = "Classified\npredicted values")
+
+modEvA::predDensity(model = moose_glm,
+                    legend.pos = "topleft",
+                    main = "Density of\npredicted values")
+```
+
+Besides measures of discrimination capacity (i.e., how well a model distinguishes presence from pseudo-absence or background points), it is also relevant to assess model calibration (i.e., whether higher predicted values reflect higher frequency of presence points):
+
+```{r HLfit-and-Boyce, results='hide'}
+par(mfrow = c(1, 2))
+
+modEvA::HLfit(model = moose_glm,
+              bin.method = "n.bins",
+              min.bin.size = length(moose_glm$y) / 10,
+              main = "Hosmer-Lemeshow GOF")
+
+modEvA::Boyce(model = moose_glm,
+              main = "Continuous Boyce index")
+```
+
+We can also compute metrics of explanatory power, such as explained deviance and several pseudo-R^2^ metrics:
+
+```{r Dsquared}
+modEvA::Dsquared(model = moose_glm)
+```
+
+```{r r2-metrics, results='hide', fig.height=4}
+modEvA::RsqGLM(model = moose_glm,
+               cex.axis = 0.8,
+               main = "Pseudo R-squared")
+```
+
+Note that inputs for `modEvA` functions can be a `model` object, or two arguments `obs` and `pred`, which can be (respectively) either a vector of presences and absences (like our `pa` object above) plus a vector of their corresponding predicted values, or a set of presence point coordinates and a raster map of the predictions across the model evaluation region.
+
+### Repeating the above analysis using randomly withheld test data
+
+The above analysis only measures model fit on the same data used to train the model, which is known to give overly optimistic assessments of model performance. We will address that below and demonstrate several options for subsetting the data to get a more useful estimate of the predictive power of our models.
+
+## Automating the workflow with ENMTools
+
+`ENMTools` [@pkg-ENMTools; @ENMTools2021] automates many of the above tasks, including selecting background points, extracting environmental data, and measuring discrimination accuracy. We will essentially repeat the analysis above using `ENMTools` functions, starting from the point right after we trimmed duplicates by raster.
+
+### Buffering the points for the study area
+
+Here we are basically repeating the part above where we defined the study area, but using internal functions from `ENMTools`.
+
+```{r ENMTools-buf, fig.height=3.5}
+# Convert the point table to a terra vector object for ENMTools
+moose_points_vec <- terra::vect(moose_points,
+                                crs = terra::crs(envs_terra))
+
+study_area <- ENMTools::background.buffer(moose_points_vec,
+                                          buffer.width = 250000,
+                                          buffer.type = "circles",
+                                          mask = envs_terra,
+                                          return.type = "raster")
+
+terra::plot(study_area,
+            col = "red",
+            legend = FALSE,
+            ylim = c(30, 75))
+
+terra::points(moose_points,
+              pch = 16)
+```
+
+### Setting up the species object
+
+Constructing a model in `ENMTools` requires creating an `enmtools.species` object, which is a container for the various aspects of the data related to a given species. After modifying a species object it is always good practice to use the `check.species` function to make sure it is formatted correctly.
+
+```{r ENMTools-spobj}
+moose_species <- ENMTools::enmtools.species(range = study_area,
+                                            presence.points = moose_points_vec,
+                                            species.name = "Alces alces")
+
+moose_species <- ENMTools::check.species(moose_species)
+```
+
+Once that is done, we can call our modeling function with our species object and our environmental layers. `ENMTols` automates the process of selecting random background points, extracting environmental data, and setting aside a portion of the data for testing.
+
+```{r ENMTools-moose-glm1}
+moose_glm <- ENMTools::enmtools.glm(species = moose_species,
+                                    env = envs_terra,
+                                    test.prop = 0.3,
+                                    f = pa ~ poly(bio5, 2) + poly(bio6, 2))
+```
+
+Note that, by default, the `ENMTools::enmtools.glm()` function balances the weights of presence and background points (which is another way of obtaining predictions balanced as if modeled prevalence were 0.5), in which case the favorability function used above does not apply. The resulting model object contains a plot and a raster map of habitat suitability.
+
+```{r ENMTools-moose-glm-suitability, fig.height=3.2}
+moose_glm$suitability
+
+terra::plot(moose_glm)
+```
+
+It also contains plots of the distribution of environmental variables in the presence and background data, as well as the marginal suitability function estimated by the model.
+
+```{r ENMTools-moose-glm-responses, fig.height = 3}
+moose_glm$response.plots
+```
+
+In addition there are `evaluate` objects from `dismo` for both training and test data, which can be plotted in the same way as above.
+
+```{r ENMTools-moose-glm-discrimination, fig.width=3, fig.height=3.2}
+moose_glm$training.evaluation
+
+moose_glm$test.evaluation
+
+par(mar = c(3.5, 3.5, 2.5, 1),
+    mgp = c(2, 1, 0))
+
+dismo::plot(moose_glm$test.evaluation, "ROC")
+```
+
+Using `ENMTools` model objects also allows for some new visualization options.
+
+```{r ENMTools-moose-glm-visualize, fig.height=4}
+ENMTools::visualize.enm(model = moose_glm,
+                        env = envs_terra,
+                        layers = c("bio5", "bio6"),
+                        plot.test.data = TRUE)
+```
+
+### Projecting an ENMTools model to a future climate scenario
+
+And now, as above, we can project our model to the future so we can see future estimates of habitat suitability.
+
+```{r projecting-moose-glm, fig.height=3.2}
+future_pred <- predict(moose_glm, future_envs_terra)
+
+future_pred$suitability.plot
+```
+
+We can also compute potential range change according to the predictions of this model.
+
+```{r fuzzy-range-change-ENMtools}
+fuzzySim::fuzzyRangeChange(terra::values(moose_glm$suitability),
+                           terra::values(future_pred$suitability))
+```
+
+Since this is an `ENMTools` model, we can also see where the model was clamped so that it would not predict strongly into climates beyond those where it was trained.
+
+```{r clamp, fig.height=3.2}
+future_pred$clamp.plot
+```
+
+It looks like we did not have to do a lot of clamping.
+
+This also gives us a plot that allows us to view our presence data, our background data, and the distribution of environments in the set of layers that we are predicting to. This is useful for detecting regions of environment space where our model may be making predictions beyond its training conditions.
+
+```{r threespace, fig.height=4}
+future_pred$threespace.plot
+```
+
+## Automating the workflow with biomod2
+
+`biomod2` [@pkg-biomod2; @biomod22009] is a package that also has multiple tools and can proceed through most of the workflow presented above: background point selection, environmental data extraction, single-algorithm modeling, variable importance, and model discrimination accuracy. Moreover, it can combine several single-algorithm models into an ensemble model, which allows for calculation of algorithm uncertainty. We will repeat the analysis above once more to show the tools available in `biomod2`.
+
+### Formatting data
+
+First, `BIOMOD.formated.data` or `BIOMOD.formated.data.PA` objects are generated to manage data for building models. Background or pseudo-absence points can be sampled at this step using several methods. Here, we will use a "disk" method to match the one used above. Independent evaluation data can also be provided at this step. Summary information and visualization options are also available to check data consistency.
+
+```{r biomod2-format-1, results='hide'}
+resp_var <- rep(1, nrow(moose_points))
+
+bm_format <- biomod2::BIOMOD_FormatingData(resp.name = "Moose",
+                                           resp.var = resp_var,
+                                           resp.xy = moose_points,
+                                           expl.var = envs_terra,
+                                           PA.nb.rep = 2,
+                                           PA.nb.absences = 500,
+                                           PA.strategy = "disk",
+                                           PA.dist.min = 0,
+                                           PA.dist.max = 250000)
+```
+
+```{r biomod2-format-2}
+bm_format
+
+biomod2::summary(bm_format)
+
+plot_1 <- biomod2::plot(bm_format,
+                        do.plot = FALSE)
+
+plot_1$data.plot +
+  theme(axis.text.x = element_text(size = 10,
+                                   angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+```
+
+### Single-algorithm modeling
+
+Several single-algorithm models are available for use within `biomod2`. Each model is built and evaluated over training / validation datasets that can be constructed with different methods using the `CV.[...]` parameters. Several evaluation metrics are also available, and variable importance can be calculated as well to estimate the impact of each variable on the model predictions. The values for variable importance correspond to 1 - `r`, where `r` is the Pearson's correlation between the original prediction and a model built after shuffling the values of the variable in question. Thus, the higher the value, the less the original and shuffled predictions are correlated, meaning a higher influence of that variable on the model.
+
+```{r biomod2-single-models-1, results='hide'}
+data("OptionsBigboss", package = "biomod2")
+
+bm_mod <- biomod2::BIOMOD_Modeling(bm.format = bm_format,
+                                   modeling.id = "Split70",
+                                   models = c("RF", "GLM"),
+                                   CV.strategy = "random",
+                                   CV.nb.rep = 3,
+                                   CV.perc = 0.7,
+                                   OPT.strategy = "bigboss",
+                                   metric.eval = c("ACCURACY", "KAPPA",
+                                                   "TSS", "ROC"),
+                                   var.import = 1,
+                                   seed.val = 123,
+                                   do.progress = FALSE)
+```
+
+```{r biomod2-single-models-2}
+bm_mod
+```
+
+Functions are available to retrieve and visualize all results produced and contained in `BIOMOD.models.out` objects.
+
+```{r biomod2-single-boxplot-evaluation, echo=TRUE, fig.height=3.5}
+# Plot evaluation metrics
+biomod2::get_evaluations(bm_mod)
+
+plot_2 <- biomod2::bm_PlotEvalBoxplot(bm.out = bm_mod,
+                                      dataset = "calibration",
+                                      group.by = c("algo", "run"))
+```
+
+```{r biomod2-single-variable-importance, echo=TRUE, fig.height=2.5}
+# Plot variable importance
+biomod2::get_variables_importance(bm_mod)
+
+group_by <- c("expl.var", "algo", "algo")
+
+plot_3 <- biomod2::bm_PlotVarImpBoxplot(bm.out = bm_mod,
+                                        group.by = group_by,
+                                        do.plot = FALSE)
+
+plot_3$plot +
+  theme(axis.text.x = element_text(size = 9,
+                                   angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1))
+```
+
+```{r biomod2-single-respCurves, results='hide', fig.height=8}
+# Plot response curves for the 3 folds of the GLM model
+plot_4a <- biomod2::bm_PlotResponseCurves(
+  bm.out = bm_mod,
+  models.chosen = paste0("Moose_PA1_RUN", 1:3, "_GLM"),
+  do.bivariate = FALSE,
+  do.plot = FALSE,
+  main = "Response curves for 3 folds of GLM"
+)
+
+# Plot response curves for the 3 folds of the RF model
+plot_4b <- biomod2::bm_PlotResponseCurves(
+  bm.out = bm_mod,
+  models.chosen = paste0("Moose_PA1_RUN", 1:3, "_RF"),
+  do.bivariate = FALSE,
+  do.plot = FALSE,
+  main = "Response curves for 3 folds of RF"
+)
+
+plot_4a$plot
+
+plot_4b$plot
+```
+
+### Ensemble modeling
+
+One of the main features of `biomod2` is its extensive functionality for building and working with ensemble models. Several methods are available to combine single-algorithm model predictions : mean, median, weighted mean (depending on one evaluation metric), and committee averaging (mean of binary predictions). Confidence intervals and coefficients of variation can be computed as well to explore the variability between the single-algorithm model predictions.
+
+```{r biomod2-ensemble-models-1, results='hide'}
+# EMmean is the continuous mean ensemble, EMca is the binary committee average
+# ensemble, and EMcv is the ensemble coefficient of variation
+em_algo <- c("EMmean", "EMca", "EMcv")
+
+bm_ens <- biomod2::BIOMOD_EnsembleModeling(bm.mod = bm_mod,
+                                           models.chosen = "all",
+                                           em.by = "all",
+                                           em.algo = em_algo,
+                                           metric.select = "TSS",
+                                           metric.select.thresh = 0.4,
+                                           var.import = 1,
+                                           seed.val = 123,
+                                           do.progress = FALSE)
+
+bm_ens
+```
+
+As for single-algorithm models, functions are available to retrieve and visualize all results produced and contained in `BIOMOD.ensemble.models.out` objects.
+
+```{r biomod2-ensemble-get, echo=TRUE, fig.height=3}
+# Plot evaluation metrics
+biomod2::get_evaluations(bm_ens)
+
+plot_5 <- biomod2::bm_PlotEvalBoxplot(bm.out = bm_ens,
+                                      dataset = "calibration",
+                                      group.by = c("algo", "algo"),
+                                      main = "Ensemble calibration evaluations")
+
+# Plot variable importance
+biomod2::get_variables_importance(bm_ens)
+
+group_by <- c("expl.var", "algo", "algo")
+
+plot_6 <- biomod2::bm_PlotVarImpBoxplot(bm.out = bm_ens,
+                                        group.by = group_by,
+                                        do.plot = FALSE,
+                                        main = "Ensemble variable importance")
+
+plot_6$plot +
+  theme(axis.text.x = element_text(size = 8,
+                                   angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1),
+        legend.position = "bottom")
+```
+
+```{r biomod2-ensemble-respCurves, results='hide', fig.height=8}
+# Plot response curves. It is possible to select specific models to plot
+mod_chosen <- "Moose_EMmeanByTSS_mergedData_mergedRun_mergedAlgo"
+
+plot_7 <- biomod2::bm_PlotResponseCurves(bm.out = bm_ens,
+                                         models.chosen = mod_chosen,
+                                         do.bivariate = FALSE,
+                                         main = "EM mean response curves")
+```
+
+### Projecting biomod2 models to a future climate scenario
+
+Predictions can be made for single-algorithm models or ensemble models to obtain a `BIOMOD.projection.out` object.
+
+```{r biomod2-projection-single-cur, fig.height=5, results='hide'}
+proj_name <- "CURRENT_single"
+
+bm_mod_proj_cur <- biomod2::BIOMOD_Projection(bm.mod = bm_mod,
+                                              new.env = envs_terra,
+                                              proj.name = proj_name,
+                                              models.chosen = "all",
+                                              metric.binary = "TSS")
+
+plot_8 <- biomod2::plot(bm_mod_proj_cur,
+                        do.plot = FALSE)
+plot_8
+  theme(axis.text.x = element_text(size = 8,
+                                   angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1),
+        strip.text.x = element_text(size = 7.5))
+```
+
+```{r biomod2-projection-ensemble-cur, fig.height=2.5, results='hide'}
+proj_name <- "CURRENT_ensemble"
+
+bm_ens_proj_cur <- biomod2::BIOMOD_EnsembleForecasting(
+  bm.em = bm_ens,
+  bm.proj = bm_mod_proj_cur,
+  proj.name = proj_name,
+  models.chosen = "all",
+  metric.binary = "TSS"
+)
+
+plot_9 <- biomod2::plot(bm_ens_proj_cur,
+                        do.plot = FALSE)
+plot_9 +
+  theme(axis.text.x = element_text(size = 8,
+                                   angle = 90,
+                                   vjust = 0.5,
+                                   hjust = 1),
+        strip.text.x = element_text(size = 4))
+```
+
+Binary range predictions can be compared to observe differences between algorithms, environmental conditions, etc.
+
+```{r biomod2-projection-ensemble-fut, results='hide'}
+proj_name <- "FUTURE_ensemble"
+
+bm_ens_proj_fut <- biomod2::BIOMOD_EnsembleForecasting(
+  bm.em = bm_ens,
+  new.env = future_envs_terra,
+  proj.name = proj_name,
+  models.chosen = "all",
+  metric.binary = "TSS"
+)
+```
+
+```{r biomod2-range-size-1, results='hide'}
+current_proj <- biomod2::get_predictions(obj = bm_ens_proj_cur,
+                                         metric.binary = "TSS")
+
+future_proj <- biomod2::get_predictions(obj = bm_ens_proj_fut,
+                                        metric.binary = "TSS")
+# Rename.
+names_proj <- sub("_mergedData_mergedRun_mergedAlgo", "", names(current_proj))
+
+names(current_proj) <- names_proj
+
+names(future_proj) <- names_proj
+```
+
+```{r biomod2-range-size-2, results='hide'}
+bm_range <- biomod2::BIOMOD_RangeSize(proj.current = current_proj,
+                                      proj.future = future_proj)
+```
+
+The difference between range estimates is calculated as `future_proj - 2 * current_proj` and results in 4 values corresponding to:
+
+* -2 : predicted to be lost
+* -1 : predicted to remain occupied
+* 0 : predicted to remain unoccupied
+* 1 : predicted to be gained
+
+```{r biomod2-range-size-3, fig.height=3.5}
+biomod2::plot(bm_range$Diff.By.Pixel)
+```
+
+Summary information can be provided at the scale of the study extent, containing percentages of loss and gain, as well as species range change.
+
+```{r biomod2-range-size-4}
+bm_range$Compt.By.Models
+```
+
+```{r biomod-clean, results='hide'}
+# Move output to the output folder
+folder <- "Moose"
+
+R.utils::copyDirectory(from = folder,
+                       to = paste0("../output/", folder),
+                       overwrite = TRUE)
+
+unlink(folder, recursive = TRUE)
+```
+
+Ensemble models are a good option if there is uncertainty regarding which algorithm to use, or also if one simply wants to quantify that uncertainty. Ensemble models take into account and combine the different idiosyncrasies of single models, which may behave differently depending on the available data. Thus, it provides one set of summary predictions from numerous single predictions.\
+However, due to the variability originating from occurrence data, environmental data and scenarios, and modeling approaches, it may also be recommendable to explore this variability for single algorithms that might reverberate into ensemble predictions and results.
+
+
+# Comparing cross-validation strategies
+
+In this section, we present *model evaluation* with the `blockCV` package [@pkg-blockCV; @blockCV2019].\
+To evaluate how well a model can predict the spatial distribution of a species, we need to evaluate the model's performance on a dataset that is not used for model fitting. It is ideal to use data that is collected independently from the training data. However, in ecology, such independent data is rarely available. There are different resampling strategies to evaluate models when independent data is not available. One of the main evaluation strategies is cross-validation [@blockCV2019]. The most common cross-validation is *k-fold cross-validation*. In this cross-validation, data is split into **k** folds (or parts), **k** - 1 folds are used for model training and the fitted model is evaluated on the withheld part. This repeats until all **k** folds are used for evaluation once.\
+Splitting data in cross-validation can be done randomly (known as random cross-validation) or in a structured way, e.g., spatially or environmentally (known as block cross-validation, [@roberts2017]).\
+Here, we show both random and block cross-validation for a Maxent model [@phillips2017]. In both examples, we use the species data prepared in the previous section by the `ENMTools` package.
+
+## Data preparation and model
+
+### Preparing species and environmental data
+
+We need enough background samples to give a good representation of the environmental variation in the training extent. We take 10,000 random samples here.
+
+```{r select-background}
+background_points <- terra::spatSample(study_area,
+                                       size = 10000,
+                                       xy = TRUE,
+                                       na.rm = TRUE,
+                                       values = FALSE) |>
+  as.data.frame() |>
+  # Match the names with presence points
+  setNames(c("Longitude", "Latitude"))
+```
+
+Now, we extract predictor variable values.
+
+```{r extract-predictors-1}
+# Select a subset of predictor variables from the previous exercise
+envs_terra_subset <- envs_terra[[c("bio2", "bio6", "bio12")]]
+
+model_data <- rbind(moose_points, background_points)
+
+model_data <- cbind(model_data, terra::extract(envs_terra_subset,
+                                               model_data,
+                                               ID = FALSE)) |>
+  as.data.frame() |>
+  # Create 0 and 1 responses (0 for background, 1 for occurrence)
+  dplyr::mutate(pa = c(rep(1, nrow(moose_points)),
+                       rep(0, nrow(background_points)))) |>
+  # Remove the NA values.
+  tidyr::drop_na()
+```
+
+Now let's see the number of background samples and presences.
+
+```{r table-pres-bg}
+table(model_data$pa)
+```
+
+Note that not all of these presence data will necessarily be used in modeling and thus contribute to the actual sample size. Only presences for which there are environmental values (i.e., presence points that overlap non-NA pixels) will actually be used for modeling.
+
+### Modeling method
+
+Maxent is implemented as a Java program that can be run via R through the `dismo` or `predicts` package, or as an R implementation run with the `maxnet` package [@phillips2017]. We will be using the Java program for this example.
+
+## Random cross-validation
+
+### Creating random folds
+
+To evaluate models with **5-fold** random cross-validation we need to create folds first. The `dismo` package has a function for this.
+
+```{r dismo-folds}
+folds <- dismo::kfold(model_data,
+                      k = 5)
+```
+
+### Modeling and cross-validation
+
+```{r rand-crossval}
+# Select the indices that correspond to the predictor variables
+covars <- which(!(names(model_data) %in% c("Longitude", "Latitude", "pa")))
+
+# Create an empty vector to store the AUC of each fold
+aucs_rand_cv <- c()
+
+# Create an empty list for storing models
+models_rand_cv <- list()
+
+for (k in 1:5) {
+  # Extract the training and testing indices
+  train_set <- which(folds != k)
+  test_set <- which(folds == k)
+
+  # Build the Maxent model
+  maxent_model <- dismo::maxent(p = model_data$pa[train_set],
+                                x = model_data[train_set, covars],
+                                silent = TRUE)
+  models_rand_cv[[k]] <- maxent_model
+
+  # Predict the test set
+  predictions <- dismo::predict(maxent_model, model_data[test_set, ])
+
+  # Calculate AUC for test set
+  auc <- modEvA::AUC(obs = model_data$pa[test_set],
+                     pred = predictions,
+                     plot = FALSE) |>
+    getElement("AUC")
+  aucs_rand_cv[k] <- auc
+}
+
+print(aucs_rand_cv)
+```
+
+This process calculates 5 validation AUC values, and we can take their average to determine model performance on withheld data.
+
+```{r mean-auc-rand-crossval}
+mean(aucs_rand_cv)
+```
+
+### Spatial prediction
+
+When using cross-validation, there are **k** models available. There are different ways of making spatial predictions after selecting a set of model settings based on cross-validation results. One way is to re-fit a model with these settings on the full dataset and use this model for prediction. However, the model fit with all the data may not be representative of the performance of the folds, which are composed of subsets of the data. Another strategy is to make **k** predictions from the folds themselves and average them (similar to an ensemble). The appropriateness of these methods depends on the application.
+
+```{r all-predictions}
+# Make predictions for the list of models built from folds
+rand_cv_preds <- lapply(models_rand_cv, terra::predict, envs_terra_subset) |>
+  terra::rast() |>
+  setNames(paste0("k = ", seq(1, length(models_rand_cv))))
+
+terra::plot(rand_cv_preds)
+```
+
+Let's average the fold model predictions and calculate their standard deviation.
+
+```{r average-prediction, fig.height=3}
+rand_cv_avg_pred <- terra::mean(rand_cv_preds)
+
+rand_cv_sd_pred <- terra::app(rand_cv_preds, fun = sd)
+
+# Create a color palette.
+red_colors <- colorRampPalette(c("gray95", "red"))
+
+par(mfrow = c(1, 2))
+
+terra::plot(rand_cv_avg_pred,
+            main = "Average prediction: \nrandom CV")
+
+terra::plot(rand_cv_sd_pred,
+            col = red_colors(10),
+            main = "Standard deviation: \nrandom CV")
+```
+
+## Block cross-validation
+
+There are several choices to make when using block cross-validation, 1) the type of blocks used for making folds, 2) how to construct those blocks (e.g., by spatial polygons or buffers around points), and 3) how to assign folds to blocks when the number of blocks is higher than the number of folds. Read more details in @blockCV2019. Here, we use spatial blocks with an arbitrary choice of 5 rows, 10 columns, 5 folds, and random assignments of blocks to folds.
+
+### Creating spatial folds
+
+To create spatial folds with `blockCV` package, the species data (the data after cleaning `model.data`) should be transferred to a spatial object. For this, we need the coordinates of both the presence and background records. Note that if points are removed because they lack predictor variable values, they should be removed here as well.
+
+```{r sf-moose}
+model_data_sf <- rbind(moose_points, background_points) |>
+  dplyr::mutate(pa = c(rep(1, nrow(moose_points)),
+                       rep(0, nrow(background_points)))) |>
+  sf::st_as_sf(coords = c("Longitude", "Latitude"))
+```
+
+It is good practice (and for some models maybe necessary) to make a similar number of points between the folds. This is not always possible with spatial cross-validation. When using `selection = "random"`, the function tries to find a balanced number of presence and background/pseudo-absence points between the folds.
+
+```{r blocks-moose, fig.height=3}
+# Spatial blocking by rows and columns with random assignment
+spatial_blocks <- blockCV::cv_spatial(x = model_data_sf,
+                                      column = "pa",
+                                      k = 5,
+                                      selection = "random",
+                                      iteration = 50,
+                                      # Number of rows and cols of blocks
+                                      rows_cols = c(5, 10))
+```
+
+Plot the presence points and spatial blocks.
+
+```{r plot-blocks, fig.height=4}
+terra::plot(envs_terra_subset[[1]])
+
+terra::plot(spatial_blocks$blocks$geometry,
+            add = TRUE)
+
+terra::points(moose_points,
+              pch = 16)
+```
+
+### Modeling and cross-validation
+
+```{r extract-predictors-2}
+# Extract the folds in the spatialBlock object created in the previous section
+# (with presence-background data)
+folds <- spatial_blocks$folds_ids
+
+# Select the indices that correspond to the predictor variables
+covars <- which(!(names(model_data) %in% c("Longitude", "Latitude", "pa")))
+
+# Create an empty vector to store the AUC of each fold
+aucs_spat_cv <- c()
+
+# Create an empty list for storing models
+models_spat_cv <- list()
+
+for (k in 1:5) {
+  # Extracting the training and testing indices
+  train_set <- which(folds != k) # training set indices
+  test_set <- which(folds == k) # testing set indices
+  maxent_model <- dismo::maxent(p = model_data$pa[train_set],
+                                x = model_data[train_set, covars],
+                                silent = TRUE)
+  models_spat_cv[[k]] <- maxent_model
+
+  # Predict the test set
+  predictions <- dismo::predict(maxent_model, model_data[test_set, ])
+
+  # Calculate AUC for test set
+  auc <- modEvA::AUC(obs = model_data$pa[test_set],
+                     pred = predictions,
+                     plot = FALSE) |>
+    getElement("AUC")
+  aucs_spat_cv[k] <- auc
+}
+
+print(aucs_spat_cv)
+```
+
+As above, calculate 5 validation AUC values and take their average.
+
+```{r mean-aucs-spat-cv}
+mean(aucs_spat_cv)
+```
+
+### Spatial prediction
+
+```{r plot-all-spat-cv}
+# Make predictions for the list of models built from folds
+spat_cv_preds <- lapply(models_spat_cv, dismo::predict, envs_terra_subset) |>
+  terra::rast() |>
+  setNames(paste0("k = ", seq(1, length(models_rand_cv))))
+
+terra::plot(spat_cv_preds)
+```
+
+Let's average the fold model predictions and calculate their standard deviation.
+
+```{r plot-mean-spat-cv, fig.height=3}
+spat_cv_avg_pred <- terra::mean(spat_cv_preds)
+
+spat_cv_sd_pred <- terra::app(spat_cv_preds, fun = sd)
+
+# Create a color palette
+red_colors <- colorRampPalette(c("gray95", "red"))
+
+par(mfrow = c(1, 2))
+
+terra::plot(spat_cv_avg_pred,
+            main = "Average prediction: \nspatial block CV")
+
+terra::plot(spat_cv_sd_pred,
+            col = red_colors(10),
+            main = "Standard deviation: \nspatial block CV")
+```
+
+Although the averages of the fold predictions look very similar, the standard deviation is much higher for spatial cross-validation than random. This is because with spatial cross-validation, the environmental distributions among folds differ much more than for random cross-validation. This means that predicting some folds will require extrapolation, which tends to result in poorer performance than interpolation. This is also why we saw that the average validation AUC for spatial cross-validation was lower than for random cross-validation. Because the prediction exercises tend to involve more extrapolation, spatial cross-validation is a better test of model transferability (or predictions to environmental conditions more extreme than the ranges of the training data) [@roberts2017].
+
+
+# References

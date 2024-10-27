@@ -1,0 +1,1476 @@
+---
+title: "Modeling Distributions of an Invasive Species and Transferring Models"
+author:
+  - Jamie M. Kass
+  - Matthew E. Aiello-Lammens
+  - Eduardo Arlé
+  - Marlon Cobos
+  - Luis Osorio-Olvera
+  - Andrea Sánchez-Tapia
+  - Santiago J.E. Velazco
+  - Damaris Zurell
+bibliography:
+  - references.bib
+  - r-pkgs.bib
+csl: https://www.zotero.org/styles/ecography
+nocite: "@valavi_et_al_2021"
+link-citations: yes
+urlcolor: blue
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    df_print: tibble
+    fig_crop: false
+    extra_dependencies: ["float", "csquotes"]
+documentclass: article
+geometry: "margin=1in"
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      out.width = "100%",
+                      fig.align = "center",
+                      fig.height = 4.5,
+                      fig.width = 6.5,
+                      fig.pos = "H")
+
+# Show messages and warnings in interactive mode
+if (!interactive()) {
+  knitr::opts_chunk$set(message = FALSE,
+                        warning = FALSE)
+}
+```
+
+
+# Introduction
+
+Invasive species present some unique problems for species distribution models (SDMs) and ecological niche models (ENMs). The areas they have invaded may represent environments with no analog in their native region. Moreover, they may not be in equilibrium with these new environments, and they also may not yet have reached all the potentially suitable areas within their dispersal capacity. Thus, we need to be careful how we specify the training data and the study extent, but also how we transfer the model to other areas for predictions of possible range expansion. The purpose of this vignette is to demonstrate:
+
+* Software tools and workflows especially helpful for modeling invasive species
+* Methods for comparing range and niche predictions between native and invaded regions
+
+
+# Packages
+
+Modeling packages:
+
+* `ENMeval` v-`r packageVersion("ENMeval")` ([GitHub](https://github.com/jamiemkass/ENMeval/tree/0353632f3389eda8bac63fcd7ca72c12a7506ae6)): automated complexity tuning for SDMs and visualizations [@pkg-ENMeval; @ENMeval2021]
+* `bRacatus` v-`r packageVersion("bRacatus")` (CRAN): functions to assess the accuracy and biogeographical status of species occurrence points [@pkg-bRacatus; @bRacatus2021]
+* `modleR` v-`r packageVersion("modleR")` ([GitHub](https://github.com/Model-R/modleR/tree/c2bebe5853db3687805c80f691d1fde7d722fce9)): wraps many existing functions and implements a reproducible SDM workflow [@pkg-modleR; @modleR2020]
+* `ellipsenm` v-`r packageVersion("ellipsenm")` ([GitHub](https://github.com/marlonecobos/ellipsenm/tree/0a2b3453f7e1465b197750b486a5e5ed6596a1da)): characterize ecological niches using ellipsoids [@pkg-ellipsenm]
+* `ntbox` v-`r packageVersion("ntbox")` ([GitHub](https://github.com/luismurao/ntbox/tree/d6b820bc6968b845c3bc2801d1ea94dfc6b30afb)): friendly GUI environment for getting biodiversity data to evaluating species distribution models [@pkg-ntbox; @ntbox2020]
+* `flexsdm` v-`r packageVersion("flexsdm")` ([GitHub](https://github.com/sjevelazco/flexsdm/tree/f550efea4f86ddea0bb360203bc33a593926cc4b)): tools for data preparation, fitting, prediction, evaluation, and post-processing of species distribution models [@pkg-flexsdm; @flexsdm2022]
+
+Packages for getting data:
+
+* `spocc` v-`r packageVersion("spocc")` (CRAN): queries multiple occurrence databases [@pkg-spocc]
+* `rgbif` v-`r packageVersion("rgbif")` (CRAN): allows access to GBIF species occurrence data [@pkg-rgbif; @rgbif2017]
+* `rnaturalearth` v-`r packageVersion("rnaturalearth")` (CRAN): world boundary data for coastlines and countries [@pkg-rnaturalearth]
+* `geodata` v-`r packageVersion("geodata")` (CRAN): allows access to many environmental datasets [@pkg-geodata]
+
+Packages for data cleaning and variable selection:
+
+* `spThin` v-`r packageVersion("spThin")` (CRAN): spatial thinning of species occurrence records [@pkg-spThin; @spThin2015]
+* `CoordinateCleaner` v-`r packageVersion("CoordinateCleaner")` (CRAN): automated cleaning of occurrence records from biological collections [@pkg-CoordinateCleaner]
+* `bdc` v-`r packageVersion("bdc")` (CRAN): biodiversity data cleaning functions [@pkg-bdc]
+* `usdm` v-`r packageVersion("usdm")` (CRAN): uncertainty analyses for SDMs [@pkg-usdm; @usdm2014]
+
+Metadata packages:
+
+* `ODMAP` v-1.0 ([GitHub](https://github.com/UP-macroecology/ODMAP), [Shiny app](https://odmap.wsl.ch)): standard protocol for reporting species distribution models [@Zurell2020a]
+
+Packages for handling spatial data:
+
+* `raster` v-`r packageVersion("raster")` (CRAN) and its successor, `terra` v-`r packageVersion("terra")` (CRAN): for handling both raster and vector spatial data [@pkg-raster; @pkg-terra]
+* `sf` v-`r packageVersion("sf")` (CRAN): for handling vector spatial data [@pkg-sf; @sf2023]
+
+Packages for computing and plotting:
+
+* `dplyr` v-`r packageVersion("dplyr")` (CRAN): wrangling data [@pkg-dplyr]
+* `ggplot2` v-`r packageVersion("ggplot2")` (CRAN): plotting tools [@pkg-ggplot2; @ggplot22016]
+
+Load required packages:
+
+```{r initial-settings}
+library(ggplot2)
+
+# Set default color palette for terra plots
+options(terra.pal = rev(terrain.colors(255)))
+
+# Set seed to reproduce random processes
+set.seed(123)
+```
+
+
+# Obtain data
+
+## Occurrence data
+
+This exercise will focus on modeling the native and invasive ranges of the Small Indian Mongoose, *Urva auropunctata*, which is native to the Indian subcontinent and invasive globally, mainly on subtropical and tropical islands.\
+First, we'll download global occurrence data for the mongoose from GBIF.
+
+```{r occ-data, eval=FALSE}
+# Let's first download occurrence data from GBIF, and also make sure all
+# records have coordinates
+occs_raw <- geodata::sp_occurrence(genus = "Urva",
+                                   species = "auropunctata",
+                                   geo = TRUE,
+                                   fixnames = FALSE)
+```
+
+Although the above method is an easy way to retrieve occurrence data, the data returned can change when GBIF is updated with new data, so it is not reproducible. We used the code below to get a download key that preserves the original data download. Also, this time we only retain records with reported coordinate uncertainty. The "<>" entries need to be replaced with your personal GBIF login information.\
+NOTE: This technique does not give you a DOI. To get one, you need to use the `occCite` package [@pkg-occCite; @occCite2021] (see the rare species vignette).
+
+```{r occ-data-dl, eval=FALSE}
+# Download the data from GBIF using a taxon key (searchable on GBIF website).
+# This function requires GBIF login information.
+occ_dl <- rgbif::occ_download(
+  rgbif::pred("taxonKey", "10504616"),
+  rgbif::pred_notnull("hasCoordinate"),
+  rgbif::pred_notnull("coordinateUncertaintyInMeters"),
+  user = "<>",
+  pwd = "<>",
+  email = "<>"
+)
+```
+
+The download key can then be used to retrieve our data [@invasive-species-data] with `rgbif` [@pkg-rgbif], ensuring that the results of the vignette do not change as new data is added to GBIF.
+
+```{r occ-data-get}
+occs_raw <- rgbif::occ_download_get(key = "0205798-230224095556074",
+                                    path = "../data/inv_species_data") |>
+  rgbif::occ_download_import()
+```
+
+Now that we have our raw data, we will do some basic cleaning first by removing exact coordinate duplicates, then simplify the data table to just the coordinates. We'll also make a simple map to visualize where our data falls in geographic space.
+
+```{r occ-data-dups, fig.height=3.3}
+# Remove any rows with exact duplicate coordinates
+occs <- occs_raw |>
+  dplyr::select(species, decimalLongitude, decimalLatitude) |>
+  dplyr::distinct(decimalLongitude, decimalLatitude, .keep_all = TRUE) |>
+  dplyr::rename(longitude = decimalLongitude,
+                latitude = decimalLatitude)
+
+# Get world country boundaries
+world <- rnaturalearth::ne_countries(scale = "small",
+                                     returnclass = "sf")
+
+# Plot occurrence records on a global map
+par(mar = c(0, 0, 0, 0))
+
+plot(world$geometry,
+     col = "gray95",
+     border = "gray70")
+
+points(occs[, 2:3],
+       pch = 21,
+       col = "black",
+       bg = "red",
+       cex = 0.5)
+```
+
+## Environmental data
+
+We will now obtain environmental data to use as predictor variables for our models. Although one should ideally use a variety of different environmental variables, we will use bioclimatic ones only here for simplicity.
+
+```{r env-data}
+# Get the Worldclim 2.1 bioclimatic variables at 10 arcmin
+# (~20 km at the equator)
+envs_terra <- geodata::worldclim_global(var = "bio",
+                                        res = 10,
+                                        path = "../data",
+                                        version = "2.1")
+
+# For readability, simplify the variable names
+names(envs_terra) <- sub("^.+(bio)_(\\d+)$", "\\1\\2", names(envs_terra))
+```
+
+
+# Data processing
+
+## Clean georeferencing errors in occurrence data
+
+Before we build our models, it is important to do some more deep cleaning of the occurrence data. Here we check our data for errors in georeferencing, or mistakes in where the coordinates were placed. For example, occurrence data for terrestrial species can fall in the ocean, or it can be located at the museum where a specimen is stored instead of where the individual was spotted. We check for georeferencing errors with the `CoordinateCleaner` [@pkg-CoordinateCleaner] and `bdc` [@pkg-bdc] packages.
+
+```{r occs-clean}
+occs_inspect <- occs |>
+  # Run tests on occurrence data for georeferencing accuracy
+  CoordinateCleaner::clean_coordinates(species = "species",
+                                       lon = "longitude",
+                                       lat = "latitude",
+                                       tests = c("capitals",
+                                                 "centroids",
+                                                 "equal",
+                                                 "gbif",
+                                                 "institutions",
+                                                 "seas",
+                                                 "zeros"),
+                                       capitals_rad = 10000,
+                                       centroids_rad = 1000,
+                                       centroids_detail = "both",
+                                       inst_rad = 100) |>
+  # Flag coordinate precision (at least 3 decimals places)
+  bdc::bdc_coordinates_precision(lon = "longitude",
+                                 lat = "latitude",
+                                 ndec = 3) |>
+  # Update the column summarizing the results of data quality tests
+  bdc::bdc_summary_col()
+
+occs_inspect
+
+# Filter only those occurrences that passed the tests
+occs_clean <- occs_inspect |>
+  dplyr::filter(.summary == TRUE) |>
+  # Remove columns with results of data quality tests
+  bdc::bdc_filter_out_flags()
+
+# Check out our cleaned occurrence dataset
+occs_clean
+```
+
+## Spatially thin occurrence data
+
+In our maps, it is evident there is geographic clustering in some areas, which can lead to spatial biases in our models. One way to address this is to spatially thin the occurrence records. Here we use the `spThin` package [@pkg-spThin; @spThin2015], which implements a random thinning algorithm that retains the greatest number of records that are no closer to each other than a user-defined distance. Generally this distance is related to some aspect of the modeled species biology, such as home-range, dispersal, etc. In this case we are using a thinning distance of 40 km, which is double the cell size of our bioclimatic data and a conservative thinning distance, considering the species' home range is at most under 1 square kilometer [@berensten_et_al_2020].
+
+```{r spatial-thin, results='hide'}
+# Here we return a list of five data frames for each iteration of the spThin
+# algorithm, then select the one with the minimum number of records
+occs_thinned_list <- spThin::thin(loc.data = occs_clean,
+                                  lat.col = "latitude",
+                                  long.col = "longitude",
+                                  spec.col = "species",
+                                  thin.par = 40,
+                                  reps = 10,
+                                  locs.thinned.list.return = TRUE,
+                                  write.files = FALSE,
+                                  write.log.file = FALSE)
+
+# Find the number of rows for each iteration, then find those which correspond
+# to the minimum
+thin_runs <- sapply(occs_thinned_list, nrow)
+
+thin_runs_min <- which(thin_runs == min(thin_runs))
+
+# Find the row names for a result with minimum row number and pull them out of
+# the original data frame. This step is especially important if you want to keep
+# information from other fields in the thinned occurrence dataset, as the spThin
+# output just contains the coordinates.
+occs_thinned_rows <- row.names(occs_thinned_list[[thin_runs_min[1]]])
+
+occs_thin <- occs_clean |>
+  dplyr::filter(rownames(occs_clean) %in% occs_thinned_rows) |>
+  as.data.frame()
+```
+
+## Designate occurrence records as native or alien
+
+We next need to designate the biogeographic status of our occurrence records as native (originating from a region) or alien (either brought by people or naturally dispersed in recent time). Here, we use country boundaries approximating the native range of *Urva auropunctata* (informed by the IUCN Red List expert range map) and an alien range map from the global Distribution of Alien Mammals database (DAMA) by @biancolini2021. We then assess regional affiliations for the occurrence records with the `bRacatus` package [@pkg-bRacatus; @bRacatus2021]. This package estimates affiliations to reference regions based on geographical distance in a probabilistic framework. We use range maps in this example, but species checklists can also be used as references.
+
+We use country boundaries instead of the actual IUCN expert map because although the latter is open data, it is not able to be shared, requiring users to log in to the database for download. Using expert maps is highly recommended instead of political boundaries, and we are using this approach simply for demonstration. If you wish to use the IUCN expert map in your analysis, simply skip the code chunk below and run the next one.
+
+```{r native-range-countries}
+# Approximation of native range following country boundaries
+native_range_countries <- c("Iraq", "India", "Bangladesh", "Bhutan", "Nepal",
+                            "Pakistan", "Afghanistan", "Turkmenistan")
+
+# Choose the countries in the world polygon layer
+native_range <- world[world$sovereignt %in% native_range_countries, ] |>
+  dplyr::group_by(geometry) |>
+  dplyr::summarize() |>
+  dplyr::mutate(range = "native") |>
+  dplyr::select(range, geometry) |>
+  sf::st_simplify(dTolerance = 1000)
+```
+
+To use the IUCN expert range map instead, first download the IUCN Red List native region map from <https://www.iucnredlist.org/species/70204120/70204139> and put the files in `/data/inv_species_data/native_range`, then use this code:
+
+```{r native-range-iucn, eval=FALSE}
+native_range_file <- file.path("../data",
+                               "inv_species_data",
+                               "native_range",
+                               "data_0.shp")
+
+# Load the IUCN expert map as sf, keep just the extant range, and simplify table
+native_range <- sf::st_read(native_range_file) |>
+  dplyr::filter(LEGEND == "Extant (resident)") |>
+  dplyr::mutate(range = "native") |>
+  dplyr::select(range, geometry) |>
+  sf::st_simplify(dTolerance = 1000)
+```
+
+Whether we used the country boundaries or the expert range map provided by the IUCN, this represents only information for the native region for this species. For the alien range of the species, we use another shapefile from the Distribution of Alien Mammals database (DAMA) by @biancolini2021.
+
+```{r biogeog-status, results='hide', fig.height=3.3}
+# First, we'll download the files from figshare
+t_file <- tempfile(fileext = ".zip")
+
+files <- paste0("Herpestes auropunctatus.",
+                c("shx", "shp", "prj", "dbf"))
+
+download.file(url = "https://api.figshare.com/v2/file/download/26404778",
+              destfile = t_file,
+              method = "libcurl",
+              mode = "wb")
+
+unzip(zipfile = t_file,
+      files = files,
+      exdir = "../data/inv_species_data/alien_range")
+
+unlink(t_file)
+
+# Next, let's load shapefile with terra, simplify geometry for plotting,
+# union all alien ranges to single shape, and process to match native
+# region sf. NOTE: we use terra to load and process the shapefile here
+# because some occurrences cross the international dateline and processing
+# with sf 1.0-9 results in shape warping -- terra avoids these issues.
+
+alien_range_file <- file.path("../data",
+                              "inv_species_data",
+                              "alien_range",
+                              "Herpestes auropunctatus.shp")
+
+alien_range <- terra::vect(alien_range_file) |>
+  terra::simplifyGeom() |>
+  terra::aggregate() |>
+  sf::st_as_sf() |>
+  dplyr::mutate(range = "alien") |>
+  dplyr::select(range, geometry)
+```
+
+We now use the `bRacatus` package to assign native or alien status to our occurrence data based on distances from the known native and alien ranges. This step will separate our occurrence data into native and alien categories so that we can build SDMs for each group separately. Later, we will also build SDMs for these data combined and compare the outputs of these models.
+
+```{r}
+# Make the data table bRacatus needs for its functions
+occs_brac <- bRacatus::giveOcc(occ_data = occs_thin,
+                               species = "species",
+                               longitude = "longitude",
+                               latitude = "latitude")
+
+# Bind the vectors of the two range maps together
+nat_ali_range <- rbind(native_range, alien_range)
+
+# Prepare the range maps as reference regions for bRacatus, which involves
+# converting to SpatialPolygonsDataFrame with sp (this will be deprecated soon)
+nat_ali_range_sp <- sf::as_Spatial(nat_ali_range)
+
+ref_reg <- bRacatus::rangeMaps(range = nat_ali_range_sp,
+                               biogeo = "range",
+                               native = "native",
+                               alien = "alien")
+
+# Calculate signals sent from the reference regions to each occurrence point
+signals <- bRacatus::signalCalculation(ref_reg = ref_reg,
+                                       pts = occs_brac,
+                                       biogeo = TRUE)
+
+# Assess the biogeographical status of individual occurrence points based on the
+# signals
+biogeo <- bRacatus::biogeoStatus(signals = signals)
+
+# Visualize the estimated biogeographical status of each occurrence point. Bluer
+# points are more likely native records, while redder points are more likely
+# alien records. White points do not have assessments with high confidence.
+bRacatus::plotBiogeoStatus(biogeo,
+                           regional = FALSE,
+                           borders = FALSE,
+                           col.features = "gray80",
+                           col.bg = "white",
+                           plot.range = TRUE,
+                           range = nat_ali_range_sp)
+
+# # Plot the native and alien regions, and also the occurrences with estimated
+# biogeographical status (threshold set at 0.5)
+par(mar = c(0, 0, 0, 0))
+
+plot(world$geometry,
+     col = "gray95",
+     border = "gray70")
+
+plot(nat_ali_range[1, ],
+     add = TRUE,
+     col = ggplot2::alpha("blue3", 0.4),
+     border = ggplot2::alpha("blue3", 0.4))
+
+plot(nat_ali_range[2, ],
+     add = TRUE,
+     col = ggplot2::alpha("red3", 0.4),
+     border = ggplot2::alpha("red3", 0.4))
+
+points(biogeo |> dplyr::filter(biogeoStatus >= 0.5) |> dplyr::select(2:3),
+       col = "blue",
+       pch = 20,
+       cex = 0.5)
+
+points(biogeo |> dplyr::filter(biogeoStatus < 0.5) |> dplyr::select(2:3),
+       col = "red",
+       pch = 20,
+       cex = 0.5)
+
+# Now we can attribute our occurrence records with "native" and "alien"
+# attributes
+occs_thin <- occs_thin |>
+  dplyr::mutate(status = ifelse(biogeo$biogeoStatus >= 0.5, "native", "alien"))
+```
+
+
+# Map in environmental space
+
+We have mapped the occurrence records in geographic space, and now we will map them in environmental space. We will extract climatic values for the points and plot them in a space defined by temperature and precipitation. We can see from this plot that most native records are in warmer and drier regions, while alien points are also found in increasingly cooler and wetter regions.
+
+```{r plot-envs, fig.height=3}
+# Extract climatic values for the occurrence records
+occs_z <- flexsdm::sdm_extract(data = occs_thin,
+                               x = "longitude",
+                               y = "latitude",
+                               env_layer = envs_terra,
+                               # Remove occurrence records with NA for at least
+                               # one variable
+                               filter_na = TRUE) |>
+  as.data.frame()
+
+occs_thin <- occs_z |>
+  dplyr::select(species:status)
+
+# Plot the climatic values and show differences between native and alien
+# records
+ggplot(occs_z, aes(x = bio1, y = bio12 / 10, color = status)) +
+  geom_point() +
+  theme_bw() +
+  labs(x = "mean annual temperature (deg C)",
+       y = "mean annual precipitation (mm)")
+```
+
+
+# Define study extent to sample background records
+
+Now we delineate study extents to sample background points for our models with the `flexsdm` package [@pkg-flexsdm]. We do this separately for the native and alien ranges. Here we use 600 km buffers to sample background points. This distance makes buffers that adequately characterize the region with the known occurrence localities without sampling too far from this data. We use a background thickening technique [@vollering2019] to account for sampling bias available in `flexsdm`. Finally, we put our backgrounds together for the native and alien regions to make a combined dataset.
+
+```{r flexsdm-nat-background-sampling, fig.height=3.6}
+# Subset occurrences to native records
+occs_nat <- occs_thin |>
+  dplyr::filter(status == "native") |>
+  dplyr::select(longitude:latitude)
+
+# Delineate study extent around native records with a 600 km buffer
+studyExt_nat <- flexsdm::calib_area(data = occs_nat,
+                                    x = "longitude",
+                                    y = "latitude",
+                                    method = c("buffer", width = 600000),
+                                    crs = "epsg: 4326")
+
+# Sample background points using the thickening approach to account for
+# sampling bias (Vollering et al. 2019) within the buffered native region
+bg_nat <- flexsdm::sample_background(data = occs_nat,
+                                     x = "longitude",
+                                     y = "latitude",
+                                     calibarea = studyExt_nat,
+                                     method = c("thickening", width = 600000),
+                                     rlayer = envs_terra,
+                                     n = 10000)
+
+# Remove third column (for presence absence data)
+bg_nat$pr_ab <- NULL
+
+# Map study extent and thickened background points with occurrences. There is a
+# higher density of background points where occurrence records are most dense.
+terra::plot(envs_terra$bio1,
+            main = "Thickened background points\nnative region",
+            xlim = c(30, 120),
+            ylim = c(5, 45),
+            mar = c(0, 2.1, 2.1, 4.1))
+
+terra::plot(studyExt_nat,
+            add = TRUE)
+
+points(bg_nat,
+       cex = 0.2)
+
+points(occs_nat,
+       bg = "red",
+       pch = 21)
+```
+
+```{r flexsdm-ali-background-sampling, fig.height=4}
+# Subset occurrences to alien records
+occs_ali <- occs_thin |>
+  dplyr::filter(status == "alien") |>
+  dplyr::select(longitude:latitude)
+
+# Delineate study extent around alien records with a 60 km buffer
+studyExt_ali <- flexsdm::calib_area(data = occs_ali,
+                                    x = "longitude",
+                                    y = "latitude",
+                                    method = c("buffer", width = 600000),
+                                    crs = "epsg: 4326")
+
+# Sample background points using the thickening approach to account for
+# sampling bias (Vollering et al. 2019) within the buffered native region.
+# Here, we get less than 10,000 background points because this exceeds the
+# number of grid cells we sample.
+bg_ali <- flexsdm::sample_background(data = occs_ali,
+                                     x = "longitude",
+                                     y = "latitude",
+                                     calibarea = studyExt_ali,
+                                     # 800 km
+                                     method = c("thickening", width = 600000),
+                                     rlayer = envs_terra,
+                                     n = 10000)
+
+# Remove third column (for presence-absence data)
+bg_ali$pr_ab <- NULL
+
+# Map study extent and thickened background points with occurrences. There is a
+# higher density of background points where occurrence records are most dense.
+terra::plot(envs_terra$bio1,
+            main = "Thickened background points\nAlien range")
+
+terra::plot(studyExt_ali,
+            add = TRUE)
+
+points(bg_ali,
+       cex = 0.01)
+
+points(occs_ali,
+       col = "red",
+       pch = 20,
+       cex = 0.3)
+```
+
+```{r flexsdm-comb-background-sampling, fig.height=4}
+# Delineate study extent around native + alien records with a 60 km buffer
+studyExt_glob <- flexsdm::calib_area(data = occs_thin[, 2:3],
+                                     x = "longitude",
+                                     y = "latitude",
+                                     method = c("buffer", width = 600000),
+                                     crs = "epsg: 4326")
+
+# Use sample background points using the thickening approach to account for
+# sampling bias (Vollering et al. 2019) within the buffered native region
+bg_glob <- flexsdm::sample_background(data = occs_thin[, 2:3],
+                                      x = "longitude",
+                                      y = "latitude",
+                                      calibarea = studyExt_glob,
+                                      # 800 km
+                                      method = c("thickening", width = 600000),
+                                      rlayer = envs_terra,
+                                      n = 10000)
+
+# Remove third column (for presence absence data)
+bg_glob$pr_ab <- NULL
+
+# Map study extent and thickened background points with occurrences. There is a
+# higher density of background points where occurrence records are most dense.
+terra::plot(envs_terra$bio1,
+            main = "Thickened background points\nNative + alien range")
+
+terra::plot(studyExt_glob,
+            add = TRUE)
+
+points(bg_glob,
+       cex = 0.01)
+
+points(occs_thin[, 2:3],
+       col = "red",
+       pch = 20,
+       cex = 0.3)
+```
+
+
+# Remove highly collinear variables
+
+High collinearity among predictor variables can lead to spurious interpretations of model responses. Additionally, when models are transferred to conditions where variable relationships change, models trained with collinear variables can produce incorrect predictions. We will use the `usdm` package [@pkg-usdm; @usdm2014] to run a stepwise variable inflation factor (VIF) analysis, which calculates variable collinearity and sequentially removes variables until an overall collinearity threshold is met.
+
+```{r var-collinearity}
+var_coll <- usdm::vifstep(occs_z[, -1:-4],
+                          th = 10)
+
+envs_sub_terra <- envs_terra[[-which(names(envs_terra) %in% var_coll@excluded)]]
+
+occs_z_sub <- occs_z |>
+  dplyr::select(longitude, latitude, status, names(envs_sub_terra))
+```
+
+
+# Niche overlap in environmental space
+
+Now that we have delineated study extents that represent the accessible area for the native and alien occurrences, we can estimate their niche overlap. Previously, we plotted these occurrences in a space defined by two environmental variables (mean annual temperature and precipitation). In this analysis, we will use the `ellipsenm` package [@pkg-ellipsenm] to estimate the multidimensional shape of the niches as ellipsoids and calculate how much they overlap in this multivariate space. We will also determine how statistically significant our results are based on a randomization test.
+
+```{r niche-overlap, results='hide', fig.height=4}
+# Extract variable raster data for the two study extents
+envs_sub_nat_terra <- terra::crop(envs_sub_terra, studyExt_nat) |>
+  terra::mask(studyExt_nat)
+
+envs_sub_ali_terra <- terra::crop(envs_sub_terra, studyExt_ali) |>
+  terra::mask(studyExt_ali)
+
+# Convert rasters to matrices, subset, and remove rows with NA
+occs_z_nat <- occs_z_sub |>
+  dplyr::filter(status == "native") |>
+  dplyr::select(-status)
+
+occs_z_ali <- occs_z_sub |>
+  dplyr::filter(status == "alien") |>
+  dplyr::select(-status)
+
+# Niche objects to be used in analyses
+niche_nat <- ellipsenm::overlap_object(data = occs_z_nat,
+                                       species = "species",
+                                       longitude = "longitude",
+                                       latitude = "latitude",
+                                       method = "covmat",
+                                       level = 95,
+                                       variables = envs_sub_nat_terra |>
+                                         as.data.frame())
+
+niche_ali <- ellipsenm::overlap_object(data = occs_z_ali,
+                                       species = "species",
+                                       longitude = "longitude",
+                                       latitude = "latitude",
+                                       method = "covmat",
+                                       level = 95,
+                                       variables = envs_sub_ali_terra |>
+                                         as.data.frame())
+
+# Niche overlap analysis with test of statistical significance. This uses a
+# randomization approach that iteratively makes random ellipsoids per species
+# from their environmental backgrounds and calculates their overlap to test the
+# null hypothesis that the niches overlap.
+# If the p-value is smaller than 0.05, we reject this null hypothesis.
+niche_ov <- ellipsenm::ellipsoid_overlap(niche_nat,
+                                         niche_ali,
+                                         overlap_type = "back_union",
+                                         significance_test = TRUE,
+                                         replicates = 100)
+
+ellipsenm::summary(niche_ov)
+
+# Plot of significance test results. The bars show frequencies of null overlaps,
+# and the dotted line shows the confidence limit line -- if the observed value
+# (blue line) is smaller than this limit, the null hypothesis of overlap is
+# rejected.
+par(mar = c(5.1, 4.1, 1, 1))
+
+ellipsenm::plot_overlap_sig(niche_ov)
+```
+
+Based on these results, we can reject the null hypothesis that the native and invasive niches overlap, meaning that they are significantly different. Niches and their overlap can be plotted in 3D (this requires `XQuartz` on Mac OS).
+
+```{r niche-overlap-3d-plot, eval=FALSE}
+ellipsenm::plot_overlap(niche_ov)
+```
+
+
+# Modeling
+
+## Model native range by tuning model complexity with ENMeval
+
+Here we build species distribution models for the native and alien ranges. Although we have polygon maps of each, we have already seen that some known occurrences fall outside their boundaries, and we do not have a good understanding of suitability differences across space. We will use the package `ENMeval` [@pkg-ENMeval; @ENMeval2021] to perform "model tuning" on Maxent models fit with the R package `maxnet` [@phillips2017; @pkg-maxnet]. Model tuning is a process that builds multiple candidate models with different complexity settings. We evaluate our models using spatial block cross-validation, which measures the model's ability to predict withheld occurrence data geographically distant from the training occurrence data, and thus, its ability to transfer to new conditions. In general, models optimized with random cross-validation should be good at predicting conditions similar to the training data, while those optimized with block cross-validation should be better at predicting new data (i.e., they should have better transferability). We make plots with `ENMeval` to examine how the spatial blocks are laid out. We then examine accuracy metrics to select which settings are optimal for our data, and look at differences in the ways complex and simple models make geographic and environmental predictions.
+
+```{r native-SDM-tune-1, fig.height=3.5}
+# Store species name in variable
+sp <- "Urva auropunctata"
+
+# Specify the hyperparameters that control complexity for Maxent: feature
+# classes that specify the shape of the model fit, and regularization
+# multipliers that specify how much complexity should be penalized
+tune_args <- list(fc = c("L", "LQ", "LQH"),
+                  rm = c(1, 3, 6, 9))
+
+# Settings for the partitioning schema
+part_settings <- list(orientation = "lat_lon")
+
+# To evaluate models, we will partition our data into groups for
+# cross-validation. Here, we make spatial groups based on longitudinal blocks,
+# as our data is structured primarily in a longitudinal direction.
+parts_nat <- ENMeval::get.block(occs = occs_nat,
+                                bg = bg_nat,
+                                orientation = "lat_lon")
+
+# We can map the occurrence points with their spatial blocks for visualization
+ENMeval::evalplot.grps(pts = occs_nat,
+                       pts.grp = parts_nat$occs.grp,
+                       envs = envs_sub_nat_terra)
+```
+
+```{r native-SDM-tune-2}
+# The partitions look appropriate for our data, so now we run all combinations
+# of hyperparameters and evaluate each based on spatial cross-validation with
+# our blocks
+tune_nat <- ENMeval::ENMevaluate(occs = occs_nat,
+                                 bg = bg_nat,
+                                 envs = envs_sub_nat_terra,
+                                 tune.args = tune_args,
+                                 partitions = "block",
+                                 algorithm = "maxnet",
+                                 partition.settings = part_settings,
+                                 taxon.name = sp)
+
+# Here are the evaluation results. There are a lot of metrics here, so it can be
+# easier to visualize with a plot.
+tune_nat@results
+
+# We can plot performance metrics to help us select optimal model settings.
+# Here, we plot the AUC, Continuous Boyce Index (CBI), and 10 percentile
+# omission rate, all averages for withheld validation data.
+ENMeval::evalplot.stats(tune_nat,
+                        stats = c("auc.val", "cbi.val", "or.10p"),
+                        x.var = "rm",
+                        color.var = "fc",
+                        error.bars = FALSE)
+```
+
+```{r native-SDM-tune-3, fig.height=6.8}
+# The model with LQH feature classes and rm 3 has relatively low omission and
+# high AUC and CBI compared to the other models. For this example, we will
+# choose these as optimal settings, though perhaps a wider range of parameters
+# should be tested in practice. Let's plot the prediction and see how it
+# compares to the LQH with a lower rm (more complexity) and higher omission.
+par(mfrow = c(2, 1),
+    mar = c(2.5, 2.5, 2.5, 1))
+
+opt_nat <- "fc.LQH_rm.3"
+
+terra::plot(tune_nat@predictions[[opt_nat]] |> raster::extend(c(0, 10)),
+            main = "LQH3 native range model (more simple): tuned")
+
+terra::points(occs_nat,
+              cex = 0.4)
+
+cx_nat <- "fc.LQH_rm.1"
+
+terra::plot(tune_nat@predictions[[cx_nat]] |> raster::extend(c(0, 10)),
+            main = "LQH1 native range model (more complex): tuned")
+
+terra::points(occs_nat,
+              cex = 0.4)
+```
+
+```{r native-SDM-tune-4, fig.height=3}
+# We can see that the simpler model has more uniform suitable areas across space
+# that connect regions with observed data. Complex models will often be more
+# patchy, which may not be ecologically realistic. We can also examine the
+# response curves for our models. But first we will extract the non-zero
+# coefficient (beta) values from the maxnet object that tell us which variables
+# and their features were actually used by the model (i.e., which did not drop
+# out due to regularization). From the results table, we saw that there are 6
+# coefficients.
+tune_nat_opt_betas <- tune_nat@models[[opt_nat]]$betas
+
+# Use a regular expression to pull out the variable names, then find the unique
+# ones. There are 6 variables used, meaning that each variable is represented by
+# a single coefficient. Hinge features can sometimes have multiple coefficients.
+tune_nat_opt_betas_uniq <- stringr::str_extract(names(tune_nat_opt_betas),
+                                                pattern = "bio\\d+") |>
+  unique()
+
+# We can then plot the marginal response curves for just these variables
+plot(tune_nat@models[[opt_nat]],
+     vars = tune_nat_opt_betas_uniq,
+     type = "cloglog",
+     mar = c(2, 2, 2, 2))
+```
+
+```{r native-SDM-tune-5}
+# We now take a look at the non-zero coefficients for the more complex model,
+# and we saw from the results table that more coefficients are used (this time,
+# there are 16)
+tune_nat_LQH1_betas <- tune_nat@models[[cx_nat]]$betas
+
+# Although there are 16 coefficients, there are only 9 variables represented.
+# This is because some variables use features that result in more coefficients.
+tune_nat_LQH1_betas_uniq <- stringr::str_extract(names(tune_nat_LQH1_betas),
+                                                 pattern = "bio\\d+") |>
+  unique()
+
+plot(tune_nat@models[[cx_nat]],
+     vars = tune_nat_LQH1_betas_uniq,
+     type = "cloglog",
+     mar = c(2, 2, 2, 2))
+```
+
+## Native range tuned model predictions for the globe
+
+Now that we have a model trained on the native region, we can project it to the globe to see how it predicts areas where the mongoose is invasive. We will compare this prediction visually to that of a more complex model that did not perform as well.
+
+```{r native-SDM-pred-1, fig.height=6.7}
+# Now, we can use our models that were trained on the mongooses' native
+# region to make predictions for the globe. Let's make cloglog predictions
+# (scale of 0-1) for the simple and complex models and compare them.
+tune_nat_opt_p <- ENMeval::maxnet.predictRaster(m = tune_nat@models[[opt_nat]],
+                                                envs = envs_sub_terra,
+                                                predType = "cloglog")
+
+tune_nat_LQH1_p <- ENMeval::maxnet.predictRaster(m = tune_nat@models[[cx_nat]],
+                                                 envs = envs_sub_terra,
+                                                 predType = "cloglog")
+
+par(mfrow = c(2, 1),
+    mar = c(2.5, 2.5, 2.5, 1))
+
+terra::plot(tune_nat_opt_p,
+            main = "LQH3 native model global projection (more simple): tuned")
+
+terra::plot(tune_nat_LQH1_p,
+            main = "LQH1 native model global projection (more complex): tuned")
+```
+
+```{r native-SDM-pred-2, fig.height=3.3}
+# We can plot the difference between the two predictions to show areas of
+# discrepancy. Here, green indicates a higher prediction for the simple model,
+# red a higher prediction for the complex model, and yellow areas of congruence.
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+terra::plot(tune_nat_opt_p - tune_nat_LQH1_p,
+            main = "Difference between native models")
+```
+
+## Model global range (native + alien) and tune model complexity with ENMeval
+
+Now, to compare with our native range model, we will train models on the global occurrence dataset, including both native and alien records. Theoretically, this will give us a more comprehensive sample of the species' fundamental niche because it includes environments that may not exist in the native region but that were suitable for invasion. We will use the same methodology as above to tune model complexity with `ENMeval`.
+
+```{r global-SDM-tune-1, fig.height=3.3}
+# Map the global background points over the study extent. The solid lines show
+# the native region and the dotted lines the invaded region.
+terra::plot(envs_sub_terra[[1]],
+            col = "gray",
+            mar = c(2, 2, 1, 4))
+
+terra::points(bg_glob,
+              cex = 0.1,
+              col = "red")
+
+terra::plot(studyExt_ali,
+            add = TRUE,
+            lwd = 2,
+            lty = 3)
+
+terra::plot(studyExt_nat,
+            add = TRUE,
+            lwd = 2,
+            lty = 1)
+```
+
+```{r global-SDM-tune-2, fig.height=3.5}
+# We'll continue to use lat-lon spatial partitioning to separate groups from
+# different regions and associated climates. Evaluating for best accuracy on
+# such groups should prioritize models that transfer to new conditions well.
+parts_glob <- ENMeval::get.block(occs = occs_thin[, 2:3],
+                                 bg = bg_glob,
+                                 orientation = "lat_lon")
+
+ENMeval::evalplot.grps(pts = occs_thin[, 2:3],
+                       pts.grp = parts_glob$occs.grp,
+                       envs = envs_sub_terra[[1]])
+```
+
+```{r global-SDM-tune-3}
+# Tune models
+tune_glob <- ENMeval::ENMevaluate(occs = occs_thin[, 2:3],
+                                  bg = bg_glob,
+                                  envs = envs_sub_terra,
+                                  tune.args = tune_args,
+                                  partitions = "block",
+                                  algorithm = "maxnet",
+                                  partition.settings = part_settings,
+                                  taxon.name = sp)
+
+# View the results table
+tune_glob@results
+
+# For the global scale, a much simpler model seems optimal according to the
+# metrics we are looking at: L features with rm 9
+ENMeval::evalplot.stats(tune_glob,
+                        stats = c("auc.val", "cbi.val", "or.10p"),
+                        x.var = "rm",
+                        color.var = "fc",
+                        error.bars = FALSE)
+```
+
+```{r global-SDM-tune-4, fig.height=3}
+# This simple model has only 5 non-zero model coefficients. As all the features
+# are linear, there is no need to find unique instances of variable names.
+opt_glob <- "fc.L_rm.9"
+
+tune_glob_opt_betas <- tune_glob@models[[opt_glob]]$betas
+
+
+# Let's plot the marginal response curves
+plot(tune_glob@models[[opt_glob]],
+     vars = names(tune_glob_opt_betas),
+     type = "cloglog",
+     mar = c(2, 2, 2, 2))
+```
+
+## Global range tuned model predictions for the globe
+
+We will now project our global model, trained on the subset of the globe in proximity to our native and alien occurrences, to all cells on the global map. As above with the native range model, we will compare this prediction visually to that of a more complex model that did not perform as well.
+
+```{r global-SDM-pred-1, fig.height=6.7}
+# We'll make range predictions for the globe with our optimal model, but also a
+# more complex model that preformed more poorly for comparison
+tune_glob_opt_p <- tune_glob@predictions[[opt_glob]]
+
+tune_glob_LQH1_p <- tune_glob@predictions[[cx_nat]]
+
+par(mfrow = c(2, 1),
+    mar = c(2, 2, 2, 2))
+
+# We can see that the global model does a poor job of predicting the native
+# range, at least compared to the native range model
+terra::plot(tune_glob_opt_p,
+            main = "L9 global model (more simple): tuned")
+
+terra::plot(tune_glob_LQH1_p,
+            main = "LQH1 global model (more complex): tuned")
+```
+
+```{r global-SDM-pred-2, fig.height=3.3}
+# Now we plot the differences between the two predictions. Here, green indicates
+# a higher prediction for the simple model, red a higher prediction for the
+# complex model, and yellow areas of congruence.
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+terra::plot(tune_glob_opt_p - tune_glob_LQH1_p,
+            main = "Simple vs. complex tuned model")
+```
+
+## Comparison between tuned native and global models
+
+When we compare the tuned native and global models, we see they show very different patterns of global predicted suitability. Ideally at this stage, one should do more experimentation with the model fitting, evaluation, and tuning processes, as well as investigate the marginal response curves for ecological realism, etc. However, as this vignette is just for demonstration, we will move forward with the native range model because it predicts similar patterns to the global model, but additionally has high predictions in the native range.
+
+```{r native-global-comparison-1, fig.height=6.7}
+par(mfrow = c(2, 1),
+    mar = c(2, 2, 2, 2))
+
+terra::plot(tune_nat_opt_p,
+            main = "Native range model: tuned")
+
+terra::plot(tune_glob_opt_p,
+            main = "Global range model: tuned")
+```
+
+```{r native-global-comparison-2, fig.height=3.3}
+# Finally, we plot the differences between the native and global models. Here,
+# green indicates a higher prediction for the native model, red a higher
+# prediction for the global model, and yellow areas of congruence. We can see
+# the native model has higher predictions in the native range, but also other
+# tropical and temperate areas.
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+terra::plot(tune_nat_opt_p - tune_glob_opt_p,
+            main = "Difference between tuned native and global models")
+```
+
+## Ensemble modeling of native range using modleR
+
+Another approach to modeling involves building models with different algorithms and combining them to make an ensemble prediction. Each algorithm has associated uncertainty, so building many models and deriving the consensus between them can reduce net methodological uncertainty. However, one must ensure that poorly performing models are not combined with those that perform well, and it is likely a good practice to tune models (when appropriate) before ensembling them. However, for the purposes of this example, we will simply ensemble three algorithms of varying complexity potential and build models with default settings (with the same background we sampled before), then evaluate each with random cross-validation. To do this, we will use the package `modleR` [@pkg-modleR; @modleR2020], which implements a four-step workflow from experimental design to model fitting, projection, and evaluation. `modleR` uses algorithms implemented in other R packages. In this example we will use BIOCLIM from `dismo` [@pkg-dismo, @booth_et_al_2014], `randomForest` [@pkg-randomForest; @randomForest2002], and GLM (base R `stats`). This package also has options for experimental design, partition joining, performance measures, and ensemble model creation, and it saves results and metadata to file, which will appear in a user-defined directory.
+
+```{r native-range-modleR-1, results='hide', fig.height=3.4}
+# First, we set up the data structure needed by modleR
+native_model_dir <- "../output/modleR_native"
+
+# Change terra objects to raster package type for modleR package
+envs_sub_nat_raster <- raster::stack(envs_sub_nat_terra)
+
+ens_nat_setup <- modleR::setup_sdmdata(species_name = sp,
+                                       occurrences = occs_nat,
+                                       predictors = envs_sub_nat_raster,
+                                       lon = "longitude",
+                                       lat = "latitude",
+                                       select_variables = FALSE,
+                                       models_dir = native_model_dir,
+                                       real_absences = bg_nat,
+                                       partition_type = "crossvalidation",
+                                       cv_n = 1,
+                                       cv_partitions = 5)
+
+# Next, we save the raster data to a folder that modleR will use for analysis.
+# Each projection should be placed in a subfolder (here: global). The variables
+# in each subfolder must have the same names as the predictors (in this case,
+# bio1, bio2, etc.).
+
+# Create folder to store rasters
+rast_folder <- "../data/inv_species_data/rasters/global"
+dir.create(rast_folder,
+           recursive = TRUE)
+
+# Write rasters to this folder
+raster::writeRaster(envs_terra,
+                    filename = file.path(rast_folder,
+                                         paste0(names(envs_terra), ".tif")),
+                    overwrite = TRUE)
+
+# Next, we fit models for BIOCLIM, GLM, and Random Forest. This function will
+# make model predictions inside subfolder "output/modleR_native/present" based
+# on the environmental variables defined in the argument `predictors`, in this
+# case, the predictor variables masked to the native range. However, we can also
+# define other sets of variables to project the model with.
+# Below, the argument `proj_data_folder` is a relative path to the folder that
+# holds the projection datasets (ex. data/rasters).
+# NOTE: the `equalize` argument balances the number of background points to that
+# of presence points for Random Forest. Other options to balance data for RF
+# models involve weighting schemes (Valavi et al., 2021).
+proj_folder <- "../data/inv_species_data/rasters"
+
+ens_nat_mods <- modleR::do_many(species_name = sp,
+                                predictors = envs_sub_nat_raster,
+                                models_dir = native_model_dir,
+                                bioclim = TRUE,
+                                glm = TRUE,
+                                rf = TRUE,
+                                equalize = TRUE,
+                                png_partitions = TRUE,
+                                # To project the model
+                                project_model = TRUE,
+                                proj_data_folder = proj_folder)
+
+# Before with ENMeval, we used the cross-validation folds solely to evaluate
+# model settings, then chose the final model with the optimal settings and fit
+# it to the full dataset. Here, we instead average the folds to get a final
+# prediction for each model (other options exist in the docs).
+# NOTE: When the folds are specified randomly, as they are here, this approach
+# is similar to bootstrapping. However, when folds are specified by blocks
+# (e.g., spatial), each fold is missing a key region of predictor space, and
+# thus averaging these would result in a consensus of models built on purpose
+# to perform poorly.
+ens_nat_mod_final <- modleR::final_model(species_name = sp,
+                                         models_dir = native_model_dir,
+                                         which_models = "raw_mean",
+                                         overwrite = TRUE)
+
+# Now that we have final models for each algorithm, we ensemble these by taking
+# the mean (though other ensemble options exist -- check docs)
+ens_nat_pred <- modleR::ensemble_model(species_name = sp,
+                                       occurrences = occs_nat,
+                                       models_dir = native_model_dir,
+                                       which_ensemble = "average",
+                                       overwrite = TRUE)
+
+# Let's plot our native ensemble range estimate against the occurrence data
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+raster::plot(ens_nat_pred$average |> raster::extend(c(0, 10)),
+             main = "Native range model: ensemble")
+
+points(occs_nat,
+       cex = 0.3)
+
+# We can now plot our native ensemble uncertainty. In modleR, this is defined as
+# the range (max-min) of different model outputs, to highlight areas where
+# the algorithms used have higher discordance.
+raster::plot(ens_nat_pred$uncertainty,
+             main = "Native range model: ensemble uncertainty")
+
+points(occs_nat,
+       cex = 0.3)
+```
+
+```{r native-range-modleR-2, results='hide', fig.height=3.3}
+# In addition, we can make a global prediction for the native range ensemble
+# model by specifying the global projection raster data with the argument
+# `proj_dir`. We will make an ensemble of these just like above
+ens_nat_mod_final_glob <- modleR::final_model(species_name = sp,
+                                              models_dir = native_model_dir,
+                                              proj_dir = "global",
+                                              which_models = "raw_mean",
+                                              overwrite = TRUE)
+
+ens_nat_pred_glob <- modleR::ensemble_model(species_name = sp,
+                                            occurrences = occs_nat,
+                                            models_dir = native_model_dir,
+                                            proj_dir = "global",
+                                            which_ensemble = "average",
+                                            overwrite = TRUE)
+
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+raster::plot(ens_nat_pred_glob$average,
+             main = "Native range model, global projection: ensemble")
+
+points(occs_nat,
+       cex = 0.3)
+
+# Now we will plot the native ensemble uncertainty for the projected extent
+raster::plot(ens_nat_pred_glob$uncertainty,
+             main = paste("Native range model, global projection:",
+                          "ensemble uncertainty"))
+
+points(occs_nat,
+       cex = 0.3)
+```
+
+## Ensemble modeling of global range with modleR
+
+Above, we trained our models on the native range, but just as for the `ENMeval` example, we will now make ensemble models using the global rasters as our training extent. A note: this is different from projecting our native range model to the global extent, as the base model is trained on the native range. Here, the base model will be trained on the global occurrences and predictor variables.
+
+```{r global-range-modleR, results='hide', fig.height=3.3}
+# Again, we set up the data structure needed by modleR
+global_model_dir <- "../output/modleR_global"
+# Change terra objects to raster package type for modleR package
+envs_sub_raster <- raster::stack(envs_sub_terra)
+ens_glob_setup <- modleR::setup_sdmdata(species_name = sp,
+                                        occurrences = occs_thin[, 2:3],
+                                        lon = "longitude",
+                                        lat = "latitude",
+                                        predictors = envs_sub_raster,
+                                        select_variables = F,
+                                        models_dir = global_model_dir,
+                                        real_absences = bg_glob,
+                                        partition_type = "crossvalidation",
+                                        cv_n = 1,
+                                        cv_partitions = 5)
+
+# And as before, we fit models for BIOCLIM, GLM, and Random Forest
+ens_glob_mods <- modleR::do_many(species_name = sp,
+                                 predictors = envs_sub_raster,
+                                 models_dir = global_model_dir,
+                                 bioclim = TRUE,
+                                 glm = TRUE,
+                                 rf = TRUE,
+                                 equalize = TRUE,
+                                 png_partitions = TRUE)
+
+# We use the same fold-averaging technique here
+ens_glob_mods_final <- modleR::final_model(species_name = sp,
+                                           models_dir = global_model_dir,
+                                           which_models = "raw_mean",
+                                           overwrite = TRUE)
+
+# And the same average ensemble here for the final prediction
+ens_glob_p <- modleR::ensemble_model(species_name = sp,
+                                     occurrences = occs_thin[, 2:3],
+                                     models_dir = global_model_dir,
+                                     which_ensemble = "average",
+                                     overwrite = TRUE)
+
+# Let's plot our global ensemble range estimate and uncertainty map. We do not
+# make a projection here because we trained models on the global data, so our
+# predictions are already at the global extent.
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+raster::plot(ens_glob_p$average,
+             main = "Global range model: ensemble")
+
+points(occs_thin[, 2:3],
+       cex = 0.3)
+
+raster::plot(ens_glob_p$uncertainty,
+             main = "Global range model: ensemble uncertainty")
+
+points(occs_thin[, 2:3],
+       cex = 0.3)
+```
+
+
+# Comparisons between tuned and ensemble modeling approaches
+
+It is difficult to do quantitative comparisons between the models built with `ENMeval` and `modleR` because they were built and evaluated in different ways. `ENMeval` used a single algorithm (Maxent), tuned its complexity, and evaluated with spatial cross-validation. `modleR` used three algorithms (BIOCLIM, GLM, Random Forest), used default settings, and evaluated with random cross-validation. Due to the many methodological differences between these two approaches, the output models and their predictions can be quite different. To compare these two maps, we could try to evaluate each on the same independent occurrence dataset, or perhaps compare each to other range maps for the species from the literature or expert map databases. Or we could simply present both as possible solutions and highlight areas of uncertainty between them. This example is just to demonstrate how to use different SDM packages together, but for a full analysis, we would try more complexity settings when tuning, use different combinations of algorithms when making ensembles, and other explorations of the data and models before we decide on a final range model for our species.
+
+```{r mod-diff-1, fig.height=6.7}
+par(mfrow = c(2, 1),
+    mar = c(2, 2, 2, 2))
+
+terra::plot(tune_glob_opt_p,
+            main = "Global range model: tuned")
+
+raster::plot(ens_glob_p$average,
+             main = "Global range model: ensemble")
+```
+
+```{r mod-diff-2, fig.height=3.3}
+# Let's also make a difference map to see where the model agree and disagree.
+# Areas with higher values are higher predictions for the tuned model, while
+# lower values are higher for the ensemble model.
+par(mar = c(2.5, 2.5, 2.5, 1))
+
+terra::plot(tune_glob_opt_p - terra::rast(ens_glob_p$average),
+            main = "Tuned vs. ensemble global models")
+```
+
+
+# Native and global range models NicheToolBox GUI
+
+NicheToolBox (`ntbox` [@pkg-ntbox; @ntbox2020]) is a software package that incorporates routines and tools for modeling correlational ecological niches with data that is easy to obtain from online sources about species' occurrences (e.g. Global Biodiversity Information Facility, GBIF; <https://www.gbif.org>) or environmental variables (e.g. CHELSA, Bio-Oracle). The software allows users to conduct all processing steps involved in ecological niche modeling: downloading and curating occurrence data, obtaining and transforming environmental data layers, selecting environmental variables, exploring relationships between geographic and ecological spaces, calibrating and selecting ellipsoid models, evaluating models using binomial and partial ROC tests, assessing extrapolation risk, and performing geographic information system operations via a graphical user interface. `ntbox` functions can be used as a part of a script or via its GUI.
+
+## The example
+
+In this tutorial, we will see how to model the potential distribution of *Urva auropunctata* using two approaches: a) we use data of its native distribution and project it to the whole world; b) we use all available data (native and invasive distribution) and project to the world.
+
+## Package installation
+
+To install `ntbox` run the following commands
+
+```{r ntbox-installation, eval=FALSE}
+devtools::install_github("luismurao/ntbox")
+```
+
+Complete installation guide for Windows, Linux, and MacOS users: <https://luismurao.github.io/ntbox_installation_notes.html>.
+
+Installation notes in Spanish due to Rusby G. Contreras-Díaz: <https://luismurao.github.io/Instalacion_ntbox.html>.
+
+## Launching the app
+
+Load `ntbox` in your R session and run the app.
+
+```{r ntbox-launch, eval=FALSE}
+library(ntbox)
+ntbox::run_ntbox()
+```
+
+## First look
+
+The above launches the Graphical User Interface (GUI) of `ntbox`.
+
+```{r ntbox-flook, echo=FALSE, fig.cap='NicheToolBox GUI.'}
+knitr::include_graphics(path = "images/ntbox_01_flook.png",
+                        dpi = 300)
+```
+
+## ntbox sections
+
+On the navigation bar menu of the GUI, you will see 10 sections:
+
+1) **`AppSettings`:** Specification of the directories for the raster layers (used to train the model), the projection layers, and the "workflow directory", which is where results will be saved.
+2) **`Data`:** Methods to search for and curate occurrence data. If the user does not have occurrence data already, `ntbox` can download GBIF data via the `spocc` package [@pkg-spocc]. Manual data curation can be done using `leaflet` [@pkg-leaflet] maps.
+3) **`Niche Space`:** Methods to extract and visualize information from the niche space (also called environmental space $E$).
+4) **`Niche correlations`:** Methods to visualize correlations and filter out environmental variables with high collinearity.
+5) **`Niche clustering`:** Methods to perform *k*-means clustering and project the results in geographic and environmental spaces (known as Hutchinson's duality [@colwell_et_al_2009]).
+6) **`ENM`:** Methods to model the ecological niche (i.e., fit a SDM). `ntbox` has functions to run BIOCLIM and ellipsoid models [@aan_aelst_and_rousseeuw_2009]. Although Maxent is not yet in the GUI interface, `ntbox` it could be run by using the `ntbox::maxent_call` function in the command line.
+7) **`SDM performance`:** Methods to measure the performance of the SDM. These methods include Partial ROC [@peterson_et_al_2008], binomial tests [@anderson_et_al_2003], and the confusion matrix [@fielding_and_bell_1997]. This section also includes map thresholding using several methodologies [@norris2014; @jimenez_valverde_and_lobo_2007];
+8) **`Extrapolation Risk`:** Methods to calculate environmental dissimilarity to evaluate extrapolation risk for model transfer exercises. This section includes Mobility-Oriented Parity (MOP) [@owens_et_al_2013]; Multivariate Environmental Similarity Surface (an optimized version) [@elith_et_al_2010], and Exdet [@mesgaran_et_al_2014].
+9) **`GIS Tools`:** Geographic Information System (GIS) tools to crop and mask raster layers and export them in other raster formats, as well as make PCA transformations of these layers.
+10) **`Save state`:** This allows you to save the data and analyses that you have done inside the application.
+
+## App Settings
+
+This section is one of the most important steps in the modeling process because in this part you specify your workflow directory and load or obtain the modeling layers.
+
+### Workflow directory
+
+This is a method that lets the user save the workflow of the `ntbox` session. It will be available once the user has specified the path to the directory where the workflow will be saved (in **`AppSettings`** section).
+
+Select workflow directory by pressing the button **Select workflow directory**.
+
+```{r ntbox-appsett, echo=FALSE, out.width='60%', fig.cap='Workflow directory.'}
+knitr::include_graphics(path = "images/ntbox_01_appsettings_01b.png",
+                        dpi = 300)
+```
+
+## Data
+
+### Environmental data
+
+`ntbox` allows users to use their own environmental raster data or download from different sources such as **WorldClim data** (<http://www.worldclim.org/>). To download, select the option *Get environmental data*.
+
+To estimate the niche of *U. auropunctata*, we will use WorldClim bioclimatic data at 5 arcminute resolution.
+
+### Uploading environmental layers
+
+Go to the **Niche layers** section and click on select raster layers directory.
+
+```{r ntbox-elayer, echo=FALSE, fig.cap='Uploading environmental layers.'}
+knitr::include_graphics(path = "images/ntbox_03_edata.png",
+                        dpi = 300)
+```
+
+## Occurrence data
+
+`ntbox` can work with two sources of longitude/latitude data: a) GBIF records, which you can search for directly from the application, and b) your occurrence data from a local file. Here, we show how to obtain occurrences from GBIF.
+
+## Searching GBIF records
+
+Go to Data -> GBIF data. Enter the **genus name** (*Urva*), **species name** (*auropunctata*), and optionally specify the number of records that you want to search (**occ search limit**). Press **Search GBIF** button and wait. If the species is in the GBIF portal, a data table will be displayed. Otherwise, it will display the following message: "No occurrences found".
+
+Let's search for at most 5000 occurrences of *U. auropunctata*
+
+```{r ntbox-gbifsearh, echo=FALSE, fig.cap='GBIF search for \\emph{Urva auropunctata}.'}
+knitr::include_graphics(path = "images/ntbox_06_gbif_search.png",
+                        dpi = 300)
+```
+
+### GBIF data cleaning
+
+You can reduce spatial clustering of occurrence records by specifying a separation (spatial filtering) distance in decimal degrees (default is 0). For *Urva auropunctata*, **1427 records** were found before cleaning, and after removing proximal records with a threshold distance of $\delta=0.1$ **205** remained, there were **`r 1427-205`** clustered records.
+
+```{r ntbox-occ-clean, echo=FALSE, fig.cap='Occurrence data cleaning.'}
+knitr::include_graphics(path = "images/ntbox_03_cleanocc.png",
+                        dpi = 300)
+```
+
+### Occurrence visualization
+
+`ntbox` uses `leaflet` maps to 1) display longitude/latitude data, 2) clean data, 3) define our accessibility (or study) area or polygon (**M data** refers to the **M concept** from the **BAM diagram** conceptual framework, which is the accessible area that the species has been able to reach, even if it has not established there; see @barve_et_al_2011 for a broader explanation on this concept), and 4) clean data using the M polygon.\
+Although there are differences between the M and the calibration area concepts, in this tutorial we will use them as synonyms.\
+To visualize the occurrences of *U. auropunctata* that we have downloaded, go to Data -> Dynamic Map, and on the right panel **Select a dataset** that you want to work with; in this case, GBIF data.
+
+```{r ntbox-occleaflet, echo=FALSE, fig.cap='Occurrence data displayed in a leaflet map.'}
+knitr::include_graphics(path = "images/ntbox_04_leaflet.png",
+                        dpi = 300)
+```
+
+To filter data using the calibration area, go to Data -> Dynamic Map and in the right-side panel press the button **Define and work with M polygon**. When activated, you can either draw a polygon using the drawing tools (top-right corner) from `ntbox` or select your own shapefile. If you prefer to define the M polygon using `ntbox`, press the polygon tool and draw it. In this example, we will use the IUCN polygon of the species from its native region.
+
+```{r ntbox-cal-area, echo=FALSE, fig.cap='Calibration area based on the IUCN polygon of the native distribution of \\emph{U. auropunctata}.'}
+knitr::include_graphics(path = "images/ntbox_04_leaflet_M.png",
+                        dpi = 300)
+```
+
+## Niche space
+
+In this section we will obtain and visualize environmental information from the occurrence points of *U. auropunctata*.
+
+### Extracting environmental information
+
+Go to Niche space -> Niche data extraction and select an occurrence dataset. In the example, we selected the **GBIF dataset**. To extract environmental information from the calibration area of *U. auropunctata* (its native distribution), we need to select **Use the M polygon"**.\
+`ntbox` can generate training and testing data using a random partition by activating the option **Generate random partition for training and testing data** . Here we use 70% to train our models and 30% to test them.
+
+```{r ntbox-eextrac, echo=FALSE, fig.cap='Environmental information of \\emph{U. auropunctata} in its calibration area.'}
+knitr::include_graphics(path = "images/ntbox_05_extect_Mdata.png",
+                        dpi = 300)
+```
+
+### Visualizing niche space
+
+Now we can explore niche data using 3-Dimensional plots. Go to Niche space -> Known niche and enter different **$x$**, **$y$**, and **$z$** values for the ellipsoid plot. Here, we will visualize the niche of *U. auropunctata* using bio5 (Max Temperature of Warmest Month), bio6 (Min Temperature of Coldest Month), and bio12 (Annual Precipitation).
+
+```{r ntbox-nichespace, echo=FALSE, fig.cap='Niche space of \\emph{U. auropunctata}.'}
+knitr::include_graphics(path = "images/ntbox_06_nichespace_Mdata.png",
+                        dpi = 300)
+```
+
+## Modeling variables
+
+One popular method to select the predictor variables for SDMs is to examine their correlations and eliminate highly correlated variables. In `ntbox`, you can obtain a list of variables that have low collinearity according to a correlation threshold, then use these variables for modeling.
+
+```{r ntbox-modlayers, echo=FALSE, fig.cap='Correlation among predictors.'}
+knitr::include_graphics(path = "images/ntbox_07_nichescor_Mdata.png",
+                        dpi = 300)
+```
+
+## Niche clustering
+
+We just reduced clustering in geographic space (spatial clustering), but `ntbox` also has tools to explore occurrence clustering in environmental space. Go to Niche clustering -> k-means. Here, you can select the variables to plot (`ntbox` uses the non-correlated variables obtained in the correlation section by default) and the number of clusters to be estimated.
+
+```{r ntbox-niche-clustering, echo=FALSE, fig.cap='Niche clustering.'}
+knitr::include_graphics(path = "images/ntbox_08_nichescluster_Mdata.png",
+                        dpi = 300)
+```
+
+## Ecological niche modeling
+
+In `ntbox`, you can model ecological niches using either minimum volume ellipsoids [@aan_aelst_and_rousseeuw_2009] or BIOCLIM. Although Maxent is not yet in the GUI interface, it can be run with `ntbox` using `ntbox::maxent_call()` in the command line.
+
+## Model selection for ellipsoid models
+
+In this modeling exercise, we will use the model calibration and selection algorithm for ellipsoids to estimate the niche and project the potential distribution of *U. auropunctata*. Go to ENM -> Ellipsoid selection.
+
+### Calibration and selection parameters
+
+We will fit models in 3, 4, and 5 dimensions (corresponding to predictor variables). To train the models, we will use native-range occurrences of *U. auropunctata* and generate 10,000 background points used to compute three statistical metrics: 1) species' prevalence; 2) binomial test; and) the partial ROC test [@peterson_et_al_2008].\
+Model selection is based on statistical significance (partial ROC test) and model performance (omission rate). For details about the model selection and calibration process, see [@pkg-ntbox; @ntbox2020]. Here we will select models that are statistically significant ($p<0.05$) and present an omission rate $\le$ 0.05. To accelerate the modeling process, computations will be done in parallel.\
+We use as calibration area the native region of *U. auropunctata* (the option "Your polygon of M"), but if we want to use all occurrence records (native and invaded regions), we need to select the option "All raster area" in the calibration parameters menu. To start the calibration process, we need to generate the background points first, so press the "Run" button under "Generate environmental background points". Press the "Run Analysis" button to start the process.
+
+```{r ntbox-cal-pars, echo=FALSE, out.width='50%', fig.cap='Ellipsoid calibration parameters.'}
+knitr::include_graphics(path = "images/ntbox_09_enm_Mdata.png",
+                        dpi = 300)
+```
+
+### Calibration results
+
+In the calibration process, we fitted 1507 models, of which 98 were statistically significant and had omission rates $\le$ 0.05.
+
+```{r ntbox-console, echo=FALSE, fig.cap='Number of models fitted and selected during the calibration and selection process.'}
+knitr::include_graphics(path = "images/ntbox_09_enm_Mdata_console.png",
+                        dpi = 300)
+```
+
+In the table of results, you will find the fitted models ordered by their statistical significance, omission rate values, and AUC values. Other available metrics are the background prevalence (bg_prevalence, which can be interpreted as the proportion of suitable environments in the calibration area), and a p-value for the binomial test (pval_bin).
+
+```{r ntbox-cal-res, echo=FALSE, fig.cap='Model calibration and selection results.'}
+knitr::include_graphics(path = "images/ntbox_09_enm_Mdata_results.png",
+                        dpi = 300)
+```
+
+## Model projection
+
+After running the calibration and selection process, you can project the fitted models to a region. Go to ENM -> ELlipsoid, and you will see the table of results obtained in the **Ellipsoid selection** section. Then choose the area where you want to project the model. We will use models trained in the native region of *U. auropunctata* and project them to the whole world.\
+Note that if you trained the models using data from the invaded and native areas, you can select the option "All raster area" in the **Select a region menu** to project the models using that information.\
+Using the results table, click on the row of the model that you want to project and press the **Run model** button.\
+If the selected model has more than three variables, `ntbox` will show response curves for each variable in the model.
+
+```{r ntbox-modproj-E, echo=FALSE, fig.cap='Model projection in environmental space.'}
+knitr::include_graphics(path = "images/ntbox_10_enm_Mdata_project.png",
+                        dpi = 300)
+```
+
+If you have 3 variables in your model, you will see a three-dimensional ellipsoid, where red colors mean sites with environments outside the niche, and yellow, green, and blue mean sites with environmental data inside the niche.
+
+```{r ntbox-modproj-E3d, echo=FALSE, fig.cap='Model projection in environmental space.'}
+knitr::include_graphics(path = "images/ntbox_10_enm_Mdata_project2.png",
+                        dpi = 300)
+```
+
+Press the save button to save all the analyses that you have done in your session.
+
+### Visualizing the model in geographic space
+
+To visualize the model prediction on a leaflet map, go to ENM -> Model projection. You will see a menu where you can select the models trained using the calibration area (M) or models trained with all available information (*i.e.*, models trained with the data from native and invaded regions, respectively). The model in the figure above was trained with information from the native region.
+
+```{r ntbox-modproj-Gm, echo=FALSE, fig.cap='Model of \\emph{U. auropunctata} trained in the native area and projected to the globe.'}
+knitr::include_graphics(path = "images/ntbox_10_enm_Mdata_visual.png",
+                        dpi = 300)
+```
+
+This is the model trained with data from both the native and invaded regions.
+
+```{r ntbox-modproj-G, echo=FALSE, fig.cap='Model of \\emph{U. auropunctata} trained using information from the native and invaded areas and projected to the globe.'}
+knitr::include_graphics(path = "images/ntbox_10_enm_Mdata_visual2.png",
+                        dpi = 300)
+```
+
+
+# Model metadata - the ODMAP protocol
+
+We will use the ODMAP (Overview, Data, Model, Assessment and Prediction) protocol to document our modeling analyses [@Zurell2020a]. The easiest way to use ODMAP is by running the interactive Shiny web application available at https://odmap.wsl.ch. Alternatively, you can simply fill in the ODMAP template available in the Supplementary Material of @Zurell2020a, or download the Shiny app from the Github repository https://github.com/UP-macroecology/ODMAP and run it locally on your machine. In the following example, we will show how to use the ODMAP Shiny app, independent of whether you use the online or the offline version. This app allows filling in the different ODMAP sections and subsections through a browser interface (in the tab "Create a protocol").
+
+```{r odmap-main-interface, echo=FALSE, fig.cap='Main interface of the ODMAP Shiny web application.'}
+knitr::include_graphics(path = "images/odmap_01_appinterface.png",
+                        dpi = 300)
+```
+
+We first go to the tab "Create a protocol". The sidebar on the left informs us about the progress we made in filling each ODMAP section. You can also download the current progress to file. We recommend to always download the .csv file before closing the Shiny app. This can be easily uploaded again under the "Upload/Import" tab to resume work. For a better layout, you can also download the ODMAP protocol as a MS Word document (.doc). However, Word documents cannot be uploaded again to the Shiny app, so they are for display purposes only.
+
+```{r odmap-overview-tab, echo=FALSE, fig.cap='In the \\enquote{Create a protocol} tab, you can fill in the separate ODMAP subsections, see your progress, and download the current state of the protocol. The Overview subsection first collects information on title, authors, and email contact.'}
+knitr::include_graphics(path = "images/odmap_02_overview.png",
+                        dpi = 300)
+```
+
+The Overview section of ODMAP protocol contains the general information about the study. It specifies the model objectives (in our case, we want to predict global climatic suitability for the species and thus want to transfer the model to other places outside our training region) and provides summary information about the type of biodiversity data and environmental data, information on spatial and temporal scale, hypotheses, modelling assumptions, and the software being used. The latter information can easily be retrieved from your R session using `sessionInfo()`.
+
+```{r odmap-overview-tab2, echo=FALSE, fig.cap='The Overview subsection in the \\enquote{Create a protocol} tab collects general information about the study objectives, type of data, scale, hypotheses, etc.'}
+knitr::include_graphics(path = "images/odmap_03_overview2.png",
+                        dpi = 300)
+```
+
+The Data, Model, Assessment, and Prediction sections collect all the technical details needed to reproduce methods and for reviewers and assessors to evaluate the appropriateness of your modelling decisions. For authors, it serves as a checklist detailing the key steps in the model-building process and related analyses.\
+A preview of the current protocol can be viewed in the tab "Protocol viewer". All ODMAP elements for which information is still missing are displayed in red.
+
+```{r odmap-protocolviewer, echo=FALSE, fig.cap='The \\enquote{Protocol viewer} tab shows the current ODMAP protocol and displays all missing information in red.'}
+knitr::include_graphics(path = "images/odmap_04_protocolviewer.png",
+                        dpi = 300)
+```
+
+Remember to always download your .csv file before closing the ODMAP Shiny app. When restarting the app, resume your work by simply uploading your previous protocol. If you have logged metadata using the `rangeModelMetaData` R-package [@Merow2019], you can also upload the corresponding RMM file and then fill in the missing ODMAP information.
+
+```{r odmap-uploadprotocol, echo=FALSE, fig.cap='The \\enquote{Upload/Import} tab allows you to upload previously downloaded ODMAP .csv files or to import RMM files from rangeModelMetaData R-package in order to continue filling in the ODMAP protocol.'}
+knitr::include_graphics(path = "images/odmap_05_uploadprotocol.png",
+                        dpi = 300)
+```
+
+
+# References

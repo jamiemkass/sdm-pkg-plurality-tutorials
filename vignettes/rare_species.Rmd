@@ -1,0 +1,1167 @@
+---
+title: "Modeling the Distributions and Niches of Rare Species"
+author:
+  - Adam B. Smith
+  - Olivier Broennimann
+  - Gonzalo E. Pinilla-Buitrago
+  - Sylvain Schmitt
+  - Sergio Vignali
+  - Alexander Zizka
+bibliography:
+  - references.bib
+  - r-pkgs.bib
+csl: https://www.zotero.org/styles/ecography
+link-citations: yes
+urlcolor: blue
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 1
+    number_sections: true
+    df_print: tibble
+    fig_crop: false
+    extra_dependencies: ["float"]
+documentclass: article
+geometry: "margin=1in"
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      out.width = "100%",
+                      fig.align = "center",
+                      fig.height = 4.5,
+                      fig.width = 6.5,
+                      fig.pos = "H")
+
+# Show messages and warnings in interactive mode
+if (!interactive()) {
+  knitr::opts_chunk$set(message = FALSE,
+                        warning = FALSE)
+}
+```
+
+
+# Introduction
+
+Species distribution models (SDMs) and ecological niche models (ENMs) struggle to model species represented by few locations. These species are also often of conservation concern. The purpose of this vignette is to demonstrate that software tools are especially helpful for modeling rare species, and to showcase methods for assessing conservation status and threat using SDMs/ENMs.
+
+
+# Packages
+
+Modeling packages:
+
+* `dismo` v-`r packageVersion("dismo")` (CRAN): basic functions for SDMing [@pkg-dismo]
+* `biomod2` v-`r packageVersion("biomod2")` (CRAN): SDM workflow and ensemble modeling [@pkg-biomod2; @biomod22009]
+* `ecospat` v-`r packageVersion("ecospat")` (CRAN): methods, utilities, and data sets for spatial ecology [@pkg-ecospat; @ecospat2017]
+* `enmSdmX` v-`r packageVersion("enmSdmX")` (CRAN): tools for SDMing [@pkg-enmSdmX; @enmSdmX2023]
+* `SDMtune` v-`r packageVersion("SDMtune")` (CRAN): for variable selection and hyperparameters tuning [@pkg-SDMtune; @SDMtune2020]
+* `SSDM` v-`r packageVersion("SSDM")` (CRAN): functions for stacked species distribution modelling [@pkg-SSDM; @SSDM2017]
+* `sampbias` v-`r packageVersion("sampbias")` (CRAN): for correcting for sampling bias among occurrences [@pkg-sampbias; @sampbias2021]
+* `wallace` v-`r packageVersion("wallace")` (CRAN): a graphical user interface for SDM/ENM workflows [@pkg-wallace; @wallace2018; @wallace2023]
+
+Packages for getting data:
+
+* `rgbif` v-`r packageVersion("rgbif")` (CRAN): access to GBIF species occurrence data [@pkg-rgbif; @rgbif2017]
+* `occCite` v-`r packageVersion("occCite")` (CRAN): downloads occurrence data with detailed metadata and generates citations [@pkg-occCite; @occCite2021]
+* `geodata` v-`r packageVersion("geodata")` (CRAN): access to many environmental datasets [@pkg-geodata]
+
+Packages for handling spatial data:
+
+* `raster` v-`r packageVersion("raster")` (CRAN) and its successor, `terra` v-`r packageVersion("terra")` (CRAN): for handling both raster and vector spatial data [@pkg-raster; @pkg-terra]
+* `sf` v-`r packageVersion("sf")` (CRAN): for handling vector spatial data [@pkg-sf; @sf2023]
+
+Packages for computing and plotting:
+
+* `dplyr` v-`r packageVersion("dplyr")` (CRAN) and `tidyr` v-`r packageVersion("tidyr")` (CRAN): wrangling data [@pkg-dplyr; @pkg-tidyr]
+* `ggplot2` v-`r packageVersion("ggplot2")` (CRAN): plotting tools [@pkg-ggplot2; @ggplot22016]
+* `cowplot` v-`r packageVersion("cowplot")` (CRAN): to aggregate multiple plots together [@pkg-cowplot]
+* `brglm2` v-`r packageVersion("brglm2")` (CRAN): for fitting GLMs with Firth's correction for separability [@pkg-brglm2; @brglm22020; @brglm22021]
+
+Load required packages:
+
+```{r initial-settings}
+library(brglm2)
+library(ggplot2)
+
+# Set default color palette for terra plots
+options(terra.pal = rev(terrain.colors(255)))
+
+# Set seed to reproduce random processes
+set.seed(123)
+```
+
+
+# Obtain data
+
+## Occurrence data
+
+This exercise will focus on modeling the range and niche of *Asclepias scaposa*, which is so rare it does not even have a common name. To obtain occurrence data, we can use the `geodata` package's `sp_occurrence` function [@pkg-geodata], although another alternative would be the `occCite` package [@pkg-occCite; @occCite2021] (see the climate change vignette).
+
+```{r get-occurrences}
+raw_occs <- geodata::sp_occurrence(genus = "Asclepias",
+                                   species = "scaposa",
+                                   geo = TRUE,
+                                   fixnames = FALSE)
+```
+
+We were able to obtain `r nrow(raw_occs)` occurrences. Let's remove records with no coordinate uncertainty. Normally, for data-deficient species it would be a good idea to spend time georeferencing these specimens to determine how accurately they were georeferenced, but for our example we will discard them.
+
+```{r remove-no-coords}
+occs <- raw_occs |>
+  tidyr::drop_na(coordinateUncertaintyInMeters)
+
+nrow(occs)
+```
+
+At the time this data was downloaded (August 2022), the commands above yielded `r nrow(occs)` records, which is few enough to be a problem for constructing a reliable model. However, if you are following along in R and entering these commands, the dynamic nature of GBIF means that you may retrieve more records, perhaps so many that modeling this species is no longer a challenge. So, to ensure that the data is static over time and that this species is "rare" in the sense that it is a useful challenge, we obtained an occurrence dataset from GBIF in advance using the `occCite` package [@occCite2021], then download the same data [@rare-species-data] with the download key using the `rgbif` package [@pkg-rgbif; @rgbif2017].
+
+```{r download-occurrences, eval=FALSE}
+# DO NOT RUN. This code illustrates how to obtain occurrence data with occCite,
+# but we have already obtained them in advance and will download the same
+# dataset using the download key.
+
+# Set GBIF credentials
+gbif_login <- occCite::GBIFLoginManager(user = "yourGBIFusernames",
+                                        email = "user@mail.com",
+                                        pwd = "12345")
+
+# Obtain occurrence dataset with metadata and download key
+Asclepsias_occs <- occCite::occQuery(
+  x = "Asclepias scaposa",
+  datasources = "gbif",
+  GBIFLogin = gbif_login,
+  GBIFDownloadDirectory = "../data/rare_species_data",
+  checkPreviousGBIFDownload = TRUE
+)
+
+# Get the download key to be used in the next step
+key_db <- Asclepsias_occs@occResults[[1]]$GBIF$Metadata$key
+
+print(key_db)
+```
+
+```{r retrieve-occurrences}
+# Retrieve a specific download from GBIF server
+occs_gbif <- rgbif::occ_download_get(key = "0417015-210914110416597",
+                                     path = "../data/rare_species_data")
+
+# Import into R
+occs <- rgbif::occ_download_import(occs_gbif)
+
+nrow(occs)
+```
+
+Now, let's download state outlines of the US and Mexico for mapping.
+
+```{r fetch-usa-mexico}
+# Download data
+usa <- geodata::gadm(country = "USA",
+                     level = 1,
+                     version = "4.1",
+                     path = "../data/rare_species_data",
+                     resolution = 2)
+
+mex <- geodata::gadm(country = "MEX",
+                     level = 1,
+                     version = "4.1",
+                     path = "../data/rare_species_data",
+                     resolution = 2)
+
+# Combine Mexico and USA
+north_am <- rbind(usa, mex)
+```
+
+Let's map records with coordinates. To make plotting go faster, we'll crop the North American political outlines to an extent demarcated by a 400-km buffer around the occurrences. We'll also label each state with its name.
+
+```{r map-with-coords}
+# Convert occurrence data to a spatial points vector
+occs_vect <- terra::vect(occs,
+                         geom = c("decimalLongitude", "decimalLatitude"),
+                         crs = enmSdmX::getCRS("WGS84"))
+
+# Buffer its extent (distance is in meters)
+buffs <- terra::buffer(occs_vect,
+                       width = 400000)
+
+# Crop political outlines for faster plotting
+extent <- terra::ext(buffs)
+
+north_am <- terra::crop(north_am, extent)
+
+# Plot map
+terra::plot(north_am,
+            col = "gray90",
+            axes = FALSE,
+            main = expression(italic("Asclepias scaposa")),
+            mar = c(0, 0, 2, 0))
+
+terra::points(occs_vect,
+              pch = 21,
+              bg = "chartreuse")
+```
+
+There are a few things to note. First, even though we have just a few occurrences, they are spread out geographically. This is important because it (hopefully) creates some variation in environments between occurrences.\
+Now let's look at the uncertainties in the coordinate locations. This is expressed as a radius around a central point.
+
+```{r spatial-uncertainty-hist, fig.width=5.5, fig.height=3}
+par(mar = c(4.5, 4.5, 0, 0))
+
+hist(occs_vect$coordinateUncertaintyInMeters,
+     breaks = 50,
+     xlab = "Coordinate uncertainty (m)",
+     main = "")
+```
+
+Luckily for us, the coordinate uncertainties are fairly small. For expediency, we'll be using rasters with relatively large cell sizes (~18.6 km), which is several times larger than the largest uncertainty in the occurrences. Using such coarse-resolution data may not always be ideal, but we'll do it for speed.\
+To model the species we will use climate data from **WorldClim** because it is easy to fetch in R. The version of the data we will use is at 10 arcminute resolution (~18.6 km at this latitude). We will crop them to the buffered region around the occurrences.\
+Definitions of the bioclim variables can be found at: <https://www.worldclim.org/data/bioclim.html>.
+
+```{r get-worldclim, fig.height=9}
+# Download climate rasters
+envs_terra <- geodata::worldclim_global(var = "bio",
+                                        res = 5,
+                                        path = "../data",
+                                        version = "2.1")
+
+# For readability, simplify the variable names
+names(envs_terra) <- sub(".*(bio)_(\\d+)$", "\\1\\2", names(envs_terra))
+
+# Crop to study region
+envs_terra <- terra::crop(envs_terra, north_am)
+
+# Plot maps
+terra::plot(envs_terra,
+            nc = 4,
+            maxnl = 19)
+```
+
+## Bias correction
+
+Looking at the map of occurrences (above), we can see that they seem clustered in some places (especially in Nuevo Leon). While it is possible that this species really likes Nuevo Leon and so is more likely to be sampled there, it is more likely that this area has been oversampled relative to other regions where it resides. One way to reduce this bias is to thin the data by discarding some of the occurrences that were clustered together (e.g., @spThin2015 and @varela_et_al_2014). However, as this species already has so few records, it would be best to avoid discard occurrences as much as possible. So, we will use data weighting instead to reduce the sampling bias. There are several ways to do this, but the general idea is that occurrences that are close to one another should "count" less because they convey similar information.\
+We will use functions in the package `sampbias` [@pkg-sampbias; @sampbias2021], which estimates bias of sites as a function of proximity to roads, airports, cities, and other features indicative of access and human population density. We will use custom settings to make this run faster, but in real-world situations using the defaults or tuning these settings is advised.
+
+```{r sampbias-run, results='hide'}
+# Prepare occurrences
+occs_sampbias <- occs[, c("species", "decimalLongitude", "decimalLatitude")]
+
+# Raster of study area
+inp_raster <- terra::rast(envs_terra[[1]],
+                          vals = 0)
+
+# Restrict analysis to this region
+restrict_sample <- terra::convHull(occs_vect) |>
+  terra::buffer(width = 200 * 1000) |>
+  sf::st_as_sf()
+
+# Calculate bias model. This may take a while
+bias <- sampbias::calculate_bias(occs_sampbias,
+                                 restrict_sample = restrict_sample,
+                                 inp_raster = inp_raster,
+                                 res = terra::res(inp_raster)[1],
+                                 mcmc_iterations = 10000, # Default 100000
+                                 mcmc_burnin = 1000, # Default 20000
+                                 verbose = FALSE)
+```
+
+What do we get?
+
+```{r sampbias-summary, fig.height=6}
+summary(bias)
+
+plot(bias)
+```
+
+We can see that being close to roads, cities, rivers, and airports increases the probability of a site being sampled. Let's map these biases.
+
+```{r sampbias-rasters, fig.height=7, fig.width=5}
+bias_rasts <- sampbias::project_bias(bias)
+
+raster::plot(bias_rasts,
+             nr = 3,
+             legend.mar = 5.7)
+```
+
+The first four rasters show bias in collection relative to each feature. "Total percentage" reflects the difference in bias relative to the highest probability of being sampled. We will use this penultimate raster to down-weight occurrences that are in oversampled locations. Each occurrence will receive a weight scaled by the complement of its probability of being sampled.
+
+```{r sample-weights}
+# Get the "total percentage" raster
+samp_weight_rast <- bias_rasts[["Total_percentage"]]
+
+# Extract percentages for each occurrence
+bias_rel_max <- terra::extract(samp_weight_rast, occs_vect)
+
+# Rescale so maximum is 1
+bias_rel_max <- bias_rel_max[, 2]
+
+occ_weights <- abs(bias_rel_max) / 100
+
+occ_weights <- occ_weights / max(occ_weights)
+
+# What do they look like?
+occ_weights
+```
+
+Let's map the occurrences and show their relative weights by the size of each point. You can see that occurrences that are close to one another have smaller weights.
+
+```{r plot-weights}
+cex <- 2 * occ_weights
+
+terra::plot(north_am,
+            col = "gray90",
+            axes = FALSE,
+            main = expression(italic("Asclepias scaposa")),
+            mar = c(0, 0, 2, 0))
+
+terra::points(occs_vect,
+              pch = 1,
+              col = "red",
+              cex = cex)
+```
+
+## Environmental data
+
+We want to a) choose predictors that are relevant to the species and b) have low pairwise collinearity (correlation). Let's look at correlations between the predictors. To do this, we will use a clustering algorithm to see which ones are highly correlated, then visualize correlations using a dendrogram. We will sample background records from the same extent used above.
+
+```{r spatial-autocorr}
+# Make a "mask" raster for where we want to locate background sites
+mask_rast <- terra::mask(envs_terra[[1]], restrict_sample)
+
+# Generate background points for every non-NA grid cell in mask raster
+bg_sites <- terra::spatSample(mask_rast,
+                              size = 10000,
+                              na.rm = TRUE,
+                              as.points = TRUE)
+nrow(bg_sites)
+bg_sites
+
+# Get climate at these sites
+bg_clim <- terra::extract(envs_terra,
+                          bg_sites,
+                          ID = FALSE)
+bg_clim
+
+corr <- cor(bg_clim,
+            method = "spearman")
+```
+
+To make the dendrogram, we will rescale correlations so larger correlations between variables represent smaller differences between them.
+
+```{r predictor-dendrogram, fig.height=4}
+corr_dist <- 1 - abs(corr)
+
+corr_dist <- as.dist(corr_dist)
+
+dendro <- hclust(corr_dist)
+
+par(mar = c(0, 2.5, 2.5, 0))
+
+plot(dendro,
+     xlab = "",
+     ylab = "1 - absolute correlation",
+     sub = "")
+
+abline(h = 0.3,
+       col = "red",
+       lty = "dotted")
+```
+
+If a split occurs below the red horizontal line, it means that the variables are correlated by >0.7 (absolute value), which is generally too high for accurate modeling. For each group (defined by splits above the line), we'll need to select one variable. You can find definitions of the 19 bioclimatic variables here on the [CHELSA webpage](https://chelsa-climate.org/bioclim/). Recalling that this is a desert species which has to persist during some very dry periods, we'll select (starting from the left):
+
+* bio16: Precipitation of the wettest quarter
+* bio17: Precipitation of the driest quarter
+* bio10: Temperature of the warmest quarter
+* bio7: Temperature Annual Range (BIO5-BIO6)
+* bio6: Minimum temperature of the coldest month
+* bio3: Isothermality (BIO2/BIO7) (×100)
+* bio15: Precipitation seasonality
+
+(Notice that we cheated a little in two cases and selected some variables from groups that fell "below" the red line of our threshold&mdash;they are *barely* correlated more than our threshold allows.)
+
+```{r define-predictors}
+preds <- paste0("bio", c(3, 6, 7, 10, 15, 16, 17))
+
+preds
+```
+
+The problem we face is that we have just a handful of occurrences but quite a few candidate variables. We could discard more variables, but none of them seem patently inappropriate for this species. To accommodate, we will need a modeling system that can pare down the number of predictors to a reasonable size.
+
+
+# Modeling
+
+## Generalized linear model
+
+Some SDM algorithms can handle cases with many predictors for a small amount of data. These include Maxent [@phillips_et_al_2004; @phillips_and_dudik_2008; @phillips2017] plus other algorithms that use regularization. However, Maxent cannot account for site-level weighting, so we will use algorithms that can. First, we need to collate the calibration data.
+
+```{r collate-train-data}
+# Extract climate for occurrences
+occs_clim <- terra::extract(envs_terra,
+                            occs_vect,
+                            ID = FALSE)
+
+# Vector indicating presence/background
+pres_bg <- c(rep(1, nrow(occs_vect)),
+             rep(0, nrow(bg_clim)))
+
+# Combine climate for occurrences and background
+clim <- rbind(occs_clim, bg_clim)
+
+train_data <- cbind(pres_bg, clim)
+
+train_data
+```
+
+We are going to construct several models, including a simple generalized linear model (GLM). Within the GLM, we'll use Firth's correction to help accommodate issues with separability between occurrences and background sites in environmental space. This is often a problem with species with few samples&mdash;ironically, models have a hard time distinguishing presence from non-presence (background) when presences and non-presences do not intermingle along environmental gradients. For GLMs, it is a good idea to "standardize" predictor variables by subtracting their mean from each value and then dividing by their variance. This helps stabilize estimates of coefficients.
+
+```{r enmSdmX-crossvalid-1}
+# Scale data for GLM
+train_data_scaled <- train_data[, c("pres_bg", preds)]
+
+train_data_scaled[, preds] <- scale(train_data_scaled[, preds])
+
+# Remember scaling parameters for later
+centers <- colMeans(train_data[, preds])
+
+scales <- apply(train_data[, preds], 2, sd)
+
+# Ensure total weights of occurrences is same as total weights of background
+# sites
+bg_weights <- rep(sum(occ_weights) / nrow(bg_sites), nrow(bg_sites))
+
+occ_bg_weights <- c(occ_weights, bg_weights)
+```
+
+This next step will cycle through all possible models (the set of which is constrained by the small sample size) and select the optimal one based on AICc.
+
+```{r enmSdmX-trainGLM, results='hide'}
+glm_models <- enmSdmX::trainGLM(data = train_data_scaled,
+                                resp = "pres_bg",
+                                preds = preds,
+                                w = occ_bg_weights,
+                                method = "brglmFit",
+                                out = c("model", "tuning"))
+```
+
+Depending on the data, we may get some warnings about `non-integer #successes in a binomial glm!`, which indicates that even with Firth's correction for separability (the `method = "brglmFit"` part), we may have some instability in model coefficients.\
+We can summarize the model using:
+
+```{r enmSdmX-glm-model-summary}
+summary(glm_models$model)
+```
+
+This is the optimal model of the set evaluated&mdash;and it's rather disappointing! You will notice it has no climatic predictors&mdash;it is an intercept-only model. Let's look at the rest of the models evaluated by the `trainGLM()` function. Here, they are sorted by AICc, from lowest (best) to highest (worst):
+
+```{r enmSdmX-glm-models-table}
+glm_models$tuning
+```
+
+Indeed, it looks like the best model is the intercept-only model, and indeed, a map of the prediction suggests the species has no strong associations with the environment:
+
+```{r enmSdmX-prediction, fig.height=4}
+# Scale the rasters like we did with the training data
+scaled_envs_terra <- terra::scale(envs_terra[[preds]],
+                                  center = centers,
+                                  scale = scales)
+
+# Make prediction.
+glm_prediction <- enmSdmX::predictEnmSdm(model = glm_models$model,
+                                         newdata = scaled_envs_terra,
+                                         na.rm = TRUE)
+
+# Map prediction.
+terra::plot(glm_prediction,
+            main = "Intercept-only model")
+
+terra::points(occs_vect,
+              pch = 21)
+```
+
+You can see that the model predicts the species is everywhere&mdash;meaning it could not identify a meaningful relationship with the climate predictors we used. This exemplifies a problem with rare species: their occurrences often contain too little information to fit informative models.\
+This is not very satisfying, but it's a necessary start! It is hard to model a rare species. Now, we use a method specifically designed to model rare species.
+
+## Ensembles of small models (ESMs)
+
+An alternative approach that tackles the problem of few data points is to fit an ensemble of small models (ESMs; @lomba_et_al_2010; @breiner_et_al_2015). ESMs are constructed by averaging the predictions from multiple bivariate models. Before averaging, each model's predictions are weighted by the relative accuracy of the model.\
+To construct an ESM for this species, we first need to format the training data using tools from the `biomod2` package [@pkg-biomod2]:
+
+```{r esm-formating-1, results='hide'}
+# Format data for biomod2
+pres_bg_coords <- rbind(terra::crds(occs_vect),
+                        terra::crds(bg_sites))
+
+biomod_data <- biomod2::BIOMOD_FormatingData(resp.name = "Asclepsias scaposa",
+                                             # Presence/background
+                                             resp.var = pres_bg,
+                                             # Prediction rasters
+                                             expl.var = scaled_envs_terra,
+                                             # Coordinates
+                                             resp.xy = pres_bg_coords)
+```
+
+```{r esm-formating-2}
+# Summaries.
+biomod_data
+```
+
+Now, we calibrate a different bivariate GLM model for each combination of predictors taken two at a time. Each model uses each predictor in its linear and quadratic forms. With 6 predictors, we thus fit `r factorial(6) / (factorial(2) * factorial(6 - 2))` bivariate models (i.e. C(6, 2) = 6! / (2! * (6 - 2)!)). We will use 70% of occurrences for the calibration and keep the remaining 30% for evaluation. We use the True Skill Statistic as a metric for evaluation [@allouche_et_al_2006]. Since this is a tutorial, we will only repeat the procedure 10 times. That is, we randomly choose 70% of the data, calibrate and evaluate the model, then repeat 9 more times (normally, we would use many more repetitions).\
+Note that the function below produces a lot of output about its progress, but we will not display that here.
+
+```{r esm-modeling, results='hide'}
+# Construct many "small" models
+esms <- ecospat::ecospat.ESM.Modeling(data = biomod_data,
+                                      models = "GLM",
+                                      NbRunEval = 10,
+                                      DataSplit = 70,
+                                      # Better, but takes longer if TRUE!
+                                      tune = FALSE,
+                                      weighting.score = "TSS",
+                                      # Site-level weights for the-biasing
+                                      Yweights = occ_bg_weights,
+                                      parallel = TRUE)
+```
+
+Now we can ensemble the small models together, giving more weight to models with a high TSS evaluation score. Very poorly performing models (with a TSS < 0.2) are excluded from the ensemble.
+
+```{r esm-ensembling-1, results='hide'}
+esm_weighted <- ecospat::ecospat.ESM.EnsembleModeling(esms,
+                                                      weighting.score = "TSS",
+                                                      threshold = 0.2)
+
+```
+
+```{r esm-ensembling-2}
+esm_weighted$ESM.evaluations
+```
+
+We see that the TSS of ensemble models across the 10 runs is around `r round(mean(esm_weighted$ESM.evaluations$TSS), 1)`, which is not great, but not too bad either. Now we can project the model to our study region. Again, we will not display the progress messages here.
+
+```{r esm-projection, results='hide'}
+# Predict each bivariate model to geographic space
+esm_maps <- ecospat::ecospat.ESM.Projection(ESM.modeling.output = esms,
+                                            new.env = scaled_envs_terra)
+
+# Create the weighted ensemble
+esm_map <- ecospat::ecospat.ESM.EnsembleProjection(
+  ESM.prediction.output = esm_maps,
+  ESM.EnsembleModeling.output = esm_weighted
+)
+
+# Convert to range of [0, 1]
+esm_map <- esm_map / 1000
+
+# Plot it
+terra::plot(esm_map,
+            range = c(0, 1),
+            main = "ESM")
+
+terra::points(occs_vect,
+              pch = 1)
+```
+
+```{r esm-clean, results='hide'}
+# Move output to the output folder
+folder <- "ESM.BIOMOD.output_Asclepsias.scaposa"
+
+R.utils::copyDirectory(from = folder,
+                       to = paste0("../output/", folder),
+                       overwrite = TRUE)
+
+unlink(folder, recursive = TRUE)
+```
+
+## Tuned Maxent model
+
+Here we will perform a model tuning analysis with the algorithm Maxent [@phillips2017] using the package `SDMtune` [@pkg-SDMtune; @SDMtune2020]. Model tuning is the process of testing models with differing levels of complexity to decide on optimal complexity settings for your data, and it is often used for machine learning models like Maxent. As a first step we will prepare the training data. `SDMtune` uses a special data format which binds together:
+
+* species name
+* coordinates at presence and absence/background locations
+* values of the environmental variables at presence and absence/background locations
+
+### Prepare data
+
+```{r SDMtune-prepare-data}
+# Get coordinates for presence and background locations
+occ_coords <- terra::crds(occs_vect,
+                          df = TRUE)
+
+bg_coords <- terra::crds(bg_sites,
+                         df = TRUE)
+
+# Create SWD object
+sdmtune_data <- SDMtune::prepareSWD(species = "Asclepias scaposa",
+                                    env = envs_terra,
+                                    p = occ_coords,
+                                    a = bg_coords)
+```
+
+We have in total `r terra::nlyr(envs_terra)` environmental predictor variables, some of which are highly correlated. Before, we selected variables based on expert knowledge. Here we will illustrate an alternative approach that uses the information contained in the data to retain the variables with the highest explanatory value.
+
+### Train full model
+
+We start by training a model using all the variables. We will use the `maxnet` implementation of Maxent and leave-one-out cross validation and **linear**, **quadratic** and **hinge** as feature class combinations. By default, the `SDMtune::train()` function uses a regularization multipler of 1 when training a `maxnet` model.
+
+```{r SDMtune-starting-model}
+# Create fold partition with k = number of presence locations
+folds <- SDMtune::randomFolds(data = sdmtune_data,
+                              k = nrow(occ_coords),
+                              only_presence = TRUE,
+                              seed = 25)
+
+starting_model <- SDMtune::train(method = "Maxnet",
+                                 data = sdmtune_data,
+                                 folds = folds,
+                                 fc = "lqh")
+```
+
+We evaluate the model using first the training AUC, and then the validation AUC (which was calculated on our withheld data).
+
+```{r SDMtune-starting-model-auc}
+SDMtune::auc(starting_model)
+
+SDMtune::auc(starting_model,
+             test = TRUE)
+```
+
+The validation AUC is rather low compared to that of the training dataset, which suggests that our starting model overfits the training data. Let's have a look at the contribution of each variable given as permutation importance.
+
+```{r SDMtune-variable-contribution-starting-model}
+vc_starting_model <- SDMtune::varImp(starting_model,
+                                     permut = 5)
+
+vc_starting_model
+
+SDMtune::plotVarImp(vc_starting_model)
+```
+
+Several variables have zero or close to zero contribution. Before continuing, we can explore the correlation between the variables based on the background point locations.
+
+```{r SDMtune-variable-correlation}
+bg_cor <- SDMtune::prepareSWD(species = "Bgs",
+                              a = bg_coords,
+                              env = envs_terra)
+
+# Plot correlation matrix heat map
+SDMtune::plotCor(bg_cor,
+                 method = "spearman",
+                 cor_th = 0.7,
+                 text_size = 1.8)
+```
+
+### Data-driven variable selection
+
+We are now ready to discard highly correlated variables using data-driven variable selection. To reduce the computation time we set the permutation number to 1 (this function takes quite long to run since we use the leave-one-out cross validation). The function `varSel` creates an interactive chart in the RStudio Viewer pane showing in real-time the selection process.
+
+```{r SDMtune-select-variables}
+selected_variables_model <- SDMtune::varSel(starting_model,
+                                            metric = "auc",
+                                            bg4cor = bg_cor,
+                                            method = "spearman",
+                                            cor_th = 0.7,
+                                            permut = 1,
+                                            # Set it to TRUE for real-time chart
+                                            interactive = FALSE)
+```
+
+Let's check the new contribution of the variables, their correlation, and the AUC values.
+
+```{r SDMtune-variable-importance-selected-variable-model, fig.height=2}
+# Variable contribution
+vc_selected_variables_model <- SDMtune::varImp(selected_variables_model,
+                                               permut = 5)
+
+vc_selected_variables_model
+
+SDMtune::plotVarImp(vc_selected_variables_model)
+```
+
+```{r SDMtune-variable-correlation-selected-variable-model, fig.width=3, fig.height=3}
+# Correlation
+retained_variables <- names(selected_variables_model@data@data)
+
+bg_cor <- SDMtune::prepareSWD(species = "Bgs",
+                              a = bg_coords,
+                              env = envs_terra[[retained_variables]])
+
+SDMtune::plotCor(bg_cor,
+                 method = "spearman",
+                 cor_th = 0.7)
+
+SDMtune::corVar(bg_cor,
+                method = "spearman")
+```
+
+```{r SDMtune-auc-selected-variable-model}
+# AUC
+SDMtune::auc(selected_variables_model)
+
+SDMtune::auc(selected_variables_model,
+             test = TRUE)
+```
+
+### Tune hyperparameters
+
+After removing the highly correlated variables, we can search for a better combination of the model hyperparameters.
+
+```{r SDMtune-hyperparameters-tuning}
+# Set hyperparameters values
+hp <- list(fc = c("l", "lq", "lh", "lqh"),
+           reg = seq(0.5, 4, 0.5))
+
+hp
+
+# Run grid search algorithm
+grid_search <- SDMtune::gridSearch(model = selected_variables_model,
+                                   hypers = hp,
+                                   metric = "auc",
+                                   # Set it to TRUE for real-time chart
+                                   interactive = FALSE)
+
+# Print results ordered according to the testing AUC
+grid_search@results[order(-grid_search@results$test_AUC), ]
+```
+
+We select the model with the highest validation AUC. From the previous table you can see that training and testing AUC values are comparable, which indicates the model has the ability to make accurate predictions for environmental values not encountered during training. The `gridSearch` function saves all the trained models, so it is possible to extract our tuned model from the output of the function.
+
+```{r SDMtune-tuned-model}
+# Select tuned model
+tuned_model_index <- which.max(grid_search@results$test_AUC)
+
+tuned_model <- grid_search@models[[tuned_model_index]]
+```
+
+```{r SDMtune-tuned-model-variable-importance, fig.height=2}
+# Variable contribution
+vc_tuned_model <- SDMtune::varImp(tuned_model,
+                                  permut = 5)
+vc_tuned_model
+
+SDMtune::plotVarImp(vc_tuned_model)
+```
+
+### Remove less important variables
+
+After tuning the model hyperparameters, the rank of the variable contribution has changed and only one variable has a permutation importance close to zero. If we are interested in projecting our model to regions outside the extent of the study area we could reduce the model complexity by discarding variables with a very low contribution. The function `reduceVar` removes each variable at a time, and we can instruct the algorithm to remove the variable only if the model performance does not decrease, according to a given metric (AUC in our case).
+
+```{r SDMtune-reduce-variables}
+final_model <- SDMtune::reduceVar(tuned_model,
+                                  th = 2,
+                                  metric = "auc",
+                                  permut = 5,
+                                  use_jk = TRUE,
+                                  # Set it to TRUE for real-time chart
+                                  interactive = FALSE)
+```
+
+Other variables have been discarded and our model uses only 3 environmental variables. We can again check the variable contribution and AUC.
+
+```{r SDMtune-variable-contribution-final-model, fig.height=2}
+vc_final_model <- SDMtune::varImp(final_model,
+                                  permut = 5)
+
+vc_final_model
+
+SDMtune::plotVarImp(vc_final_model)
+
+# AUC
+SDMtune::auc(final_model)
+
+SDMtune::auc(final_model,
+             test = TRUE)
+```
+
+### Response curves
+
+Plot the marginal and univariate response curves.
+
+```{r SDMtune-marginal-response-curves-final-model}
+# Marginal response curves
+p1 <- SDMtune::plotResponse(final_model,
+                            var = "bio8",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = TRUE,
+                            rug = TRUE)
+
+p2 <- SDMtune::plotResponse(final_model,
+                            var = "bio14",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = TRUE,
+                            rug = TRUE)
+
+p3 <- SDMtune::plotResponse(final_model,
+                            var = "bio15",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = TRUE,
+                            rug = TRUE)
+
+p4 <- SDMtune::plotResponse(final_model,
+                            var = "bio3",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = TRUE,
+                            rug = TRUE)
+
+p5 <- SDMtune::plotResponse(final_model,
+                            var = "bio6",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = TRUE,
+                            rug = TRUE)
+
+cowplot::plot_grid(p1, p2, p3, p4, p5,
+                   ncol = 2)
+```
+
+```{r SDMtune-univariate-response-curves-final-model}
+# Univariate response curves
+p6 <- SDMtune::plotResponse(final_model,
+                            var = "bio8",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = FALSE,
+                            rug = TRUE)
+
+p7 <- SDMtune::plotResponse(final_model,
+                            var = "bio14",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = FALSE,
+                            rug = TRUE)
+
+p8 <- SDMtune::plotResponse(final_model,
+                            var = "bio15",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = FALSE,
+                            rug = TRUE)
+
+p9 <- SDMtune::plotResponse(final_model,
+                            var = "bio3",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = FALSE,
+                            rug = TRUE)
+
+p10 <- SDMtune::plotResponse(final_model,
+                            var = "bio6",
+                            type = "cloglog",
+                            only_presence = TRUE,
+                            marginal = FALSE,
+                            rug = TRUE)
+
+cowplot::plot_grid(p6, p7, p8, p9, p10,
+                   ncol = 2)
+```
+
+### Variable importance
+
+We can also run a jackknife test for variable importance. This test iteratively builds models with all predictor variables but one and measures the loss in performance (in this case, AUC). Variables with the greatest loss in performance when they are excluded are attributed with the highest importance.
+
+```{r SDMtune-Jackknife-final-model, fig.height=3}
+# Run Jackknife test
+jk <- SDMtune::doJk(final_model,
+                    metric = "auc",
+                    test = TRUE)
+
+jk
+
+# Plot Jackknife test for training dataset. The reference line is the training
+# AUC of the model trained with all variables.
+p9 <- SDMtune::plotJk(jk,
+                      type = "train",
+                      ref = SDMtune::auc(final_model))
+
+# Plot Jackknife test for testing dataset. The reference line is the testing AUC
+# of the model trained with all variables.
+p10 <- SDMtune::plotJk(jk,
+                       type = "test",
+                       ref = SDMtune::auc(final_model, test = TRUE))
+
+cowplot::plot_grid(p9, p10,
+                   ncol = 1)
+```
+
+### Model projection
+
+Project the model predictions to the full extent of our study area.
+
+```{r SDMtune-model-projection}
+model_projection <- SDMtune::predict(final_model,
+                                     data = envs_terra,
+                                     fun = "mean",
+                                     type = "cloglog",
+                                     clamp = TRUE)
+
+# Prepare map
+color_ramp <- c("#2c7bb6", "#abd9e9", "#ffffbf", "#fdae61", "#d7191c")
+
+map <- SDMtune::plotPred(model_projection,
+                         lt = "Probability of\noccurrence",
+                         colorramp = color_ramp,
+                         hr = TRUE)
+
+# Plot map
+map +
+  geom_point(data = occ_coords,
+             mapping = aes(x = x, y = y),
+             color = "#542788",
+             alpha = 0.6,
+             size = 4)
+```
+
+
+# Rare *Asclepias* richness
+
+## Occurrence data
+
+We will now illustrate the use of stacked SDMs for multispecies predictions, including species richness mapping, endemism mapping, and community predictions using the `SSDM` package [@pkg-SSDM]. Stacked SDMs are combinations of multiple single-species SDMs, and they can be combined different ways. For this section, we will use 3 rare *Asclepias* species observed in the study area: *A. brachystephana*, *A. macrotis*, and *A. scaposa*. We will also use the `rgbif` package functions [@pkg-rgbif].
+
+```{r ssdm-occs-dl, eval=FALSE}
+ssdm_occs <- rgbif::occ_download(
+  rgbif::pred_or(rgbif::pred("scientificName",
+                             "Asclepias brachystephana Engelm. ex Torr."),
+                 rgbif::pred("scientificName",
+                             "Asclepias macrotis Torr."),
+                 rgbif::pred("scientificName",
+                             "Asclepias scaposa Vail")),
+  format = "SIMPLE_CSV",
+  user = "<>",
+  pwd = "<>",
+  email = "<>"
+)
+```
+
+As we did above, we will obtain the same data [@rare-asclepias-data] we originally downloaded using the `occ_download_get` function from the `rgbif` package [@pkg-rgbif; @rgbif2017].
+
+```{r ssdm-occs-tsv}
+ssdm_occs <- rgbif::occ_download_get("0046638-230530130749713",
+                                     path = "../data/rare_species_data") |>
+    rgbif::occ_download_import()
+
+ssdm_occs <- ssdm_occs |>
+  dplyr::rename(speciesfull = species,
+                lon = decimalLongitude,
+                lat = decimalLatitude) |>
+  tidyr::separate_wider_delim(cols = speciesfull,
+                              names = c("genus2", "species"),
+                              delim = " ",
+                              cols_remove = TRUE) |>
+  dplyr::select(species, lon, lat) |>
+  na.omit() |>
+  # Limit to study area
+  dplyr::filter(lon > -107, lon < -96, lat > 20, lat < 34)
+
+write.csv(ssdm_occs,
+          file = "../data/rare_species_data/rare_asclepias.csv",
+          row.names = FALSE)
+```
+
+We have `r min((dplyr::group_by(ssdm_occs, species) |> dplyr::summarise(N = dplyr::n()))$N)` to `r max((dplyr::group_by(ssdm_occs, species) |> dplyr::summarise(N = dplyr::n()))$N)` occurrences per species.
+
+```{r ssdm-occs-summary}
+ssdm_occs <- read.csv(file = "../data/rare_species_data/rare_asclepias.csv")
+
+ssdm_occs |>
+  dplyr::group_by(species) |>
+  dplyr::summarise(N = dplyr::n())
+```
+
+Let's plot a map showing the species' occurrence records.
+
+```{r ssdm-occs-map}
+ggplot(data = sf::st_as_sf(north_am)) +
+  geom_sf() +
+  geom_point(data = ssdm_occs, aes(lon, lat, col = species)) +
+  theme_minimal() +
+  scale_color_discrete(name = expression(italic("Asclepias"))) +
+  theme(legend.text = element_text(face = "italic")) +
+  xlab("") +
+  ylab("")
+```
+
+## Environmental data
+
+We will use the same predictors to model species distributions.
+
+```{r ssdm-env, fig.height=6}
+envs_raster <- raster::stack(envs_terra[[preds]])
+
+raster::plot(envs_raster,
+             legend.mar = 8,
+             legend.width = 1.5)
+```
+
+## Modelling richness
+
+Now, we will build a stacked species distribution model using the classification tree analysis (CTA) and support vector machines (SVM) algorithms. We will estimate local species richness and composition by summing the continuous SDM predictions (using the method `"pSSDM"` in `SSDM`) [@calabrese2014; @SSDM2017].
+
+```{r ssdm-modelling}
+ssdm <- SSDM::stack_modelling(algorithms = c("CTA", "SVM"),
+                              Occurrences = ssdm_occs,
+                              Env = envs_raster,
+                              rep = 1,
+                              Xcol = "lon",
+                              Ycol = "lat",
+                              Spcol = "species",
+                              method = "pSSDM",
+                              verbose = FALSE)
+```
+
+Note that: the package `SSDM` [@pkg-SSDM; @SSDM2017] includes a large methodology informed by the literature. Have a look at all parameters for the `stack_modelling` function by running `?stack_modelling`.
+
+```{r ssdm-richness, fig.width=5.5, fig.height=6}
+SSDM::plot(ssdm@diversity.map,
+           main = expression(paste("Rare ", italic("Asclepias"), " richness")))
+```
+
+## Summary
+
+All results can be summarized inside a `shiny` dashboard by calling the plot method directly on a SSDM object.
+
+```{r ssdm-plot, eval=FALSE}
+SSDM::plot(ssdm)
+```
+
+```{r ssdm-plot-fig, echo=FALSE, fig.cap='Shiny dashboard showing stacked species model results for rare \\emph{Asclepias} species.'}
+knitr::include_graphics("images/ssdmplot.png",
+                        dpi = 300)
+```
+
+
+# Maxent modeling workflow using `wallace`
+
+`Wallace EcoMod` (package `wallace`) is a modular, graphical user interface (GUI) platform for reproducible modeling of species niches and distributions, written in R [@pkg-wallace; @wallace2018; @wallace2023]. The application guides users through a complete analysis, from acquiring data to visualizing model predictions on an interactive map. Here, we will build and evaluate a Maxent model with the same occurrences and environmental data using similar methodological steps to the previous GLM (although Maxent cannot accept site-level weights, so we cannot employ this kind of bias correction).
+
+## Saving data to use in Wallace
+
+First, we will create a CSV file of the occurrences to be uploaded to `wallace`.
+
+```{r wallace-save-files}
+# Convert occurrence data to format used by Wallace
+occs_coords <- data.frame(scientific_name = "Asclepias scaposa",
+                          longitude = occs$decimalLongitude,
+                          latitude = occs$decimalLatitude)
+
+write.csv(occs_coords,
+          file = "../data/rare_species_data/asclepsias_scaposa_occs.csv",
+          row.names = FALSE)
+```
+
+Second, we will save the cropped and selected environmental predictors in `GeoTIFF` format.
+
+```{r save-predictor-rasters}
+# Save predictor rasters
+terra::writeRaster(envs_terra[[preds]],
+                   filename = paste0("../data/rare_species_data/",
+                                     preds,
+                                     ".tif"),
+                   overwrite = TRUE)
+```
+
+Finally, we will save a shapefile of the region from which background points will be sampled.
+
+```{r save-study-region}
+# Save study region outline
+terra::vect(restrict_sample) |>
+  terra::writeVector(filename = "../data/rare_species_data/study_region.shp",
+                     overwrite = TRUE)
+```
+
+## Open Wallace
+
+The `wallace` package should be already loaded in R, so you should just run the following line of code, and it will open the interface in your default browser. Keep in mind that the `wallace` package is a `shiny` application, which means it will open an HTML interface, but all the analyses will run in the R console.
+
+```{r run-wallace, eval=FALSE}
+wallace::run_wallace()
+```
+
+## Load occurrences
+
+After opening the interface, you will be in the Introduction component, which will give you an overview of the package (feel free to explore if you want more information). Please select the "Occ Data" component at the top of your screen. `wallace` gives you the option to obtain occurrences from different databases (e.g., GBIF, BIEN, paleobioDB), but we will use the occurrences saved in the CSV file. Please select the "User-specified" option on the left, then press the "Browse" button. Find the occurrences file ("data/rare_species_data/asclepsias_scaposa_occs.csv"), and press the "Load Occurrences" button on the left panel. The map should zoom to the occurrences, and you can zoom in or out using the mouse or map controls.
+
+```{r wallace-occs, echo=FALSE, fig.cap='Uploading occurrence of \\emph{Asclepsias scaposa} using the \'user-specified\' module in the \'Obtain Occurrence Data\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_1_occs.png",
+                        dpi = 300)
+```
+
+## Load environmental data
+
+Now, we will load environmental data using the "Env Data" component. Select the "User-specified" option then "Browse." You can find the `r length(preds)` predictors saved as GeoTIFF files in the `data/rare_species_data` folder. You can select more than one raster at a time by holding down the Control/Command button and clicking. Once loaded, you will see a summary of the raster data.
+
+```{r wallace-envs, echo=FALSE, fig.cap='Uploading environmental data using the \'user-specified\' module in the \'Obtain Environmental Data\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_2_envs.png",
+                        dpi = 300)
+```
+
+If you check the Log Window at the top right, it says that two localities were removed from the analysis. This is because three occurrences were located in the same grid cell. So, `wallace` picked one of these localities to retain for the analysis and removed the other two. This will leave us with 11 occurrences in total.
+
+## Study region and background points
+
+The next step is selecting the study region to obtain background points. Under the "Process Envs" component, select the "User-specified Study Region" option. There are two steps to this option.\
+In the first step, click "Browse", then find the shapefile we saved above (named "`study_region.*`"). *Please select all the files associated with the shapefile; i.e., the *`.shp`*, *`.shx`*, and *`.dbf` *files*.\
+In the second step, we will sample 2130 background points, the maximum number of grid cells we can sample in the study region. You will get a pop-up error message if you specify a higher number.
+
+```{r wallace-penvs, echo=FALSE, fig.cap='Defining study region for \\emph{Asclepsias scaposa} using an user-specified shapefile in the \'Process Environmental Data\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_3_penvs.png",
+                        dpi = 300)
+```
+
+## Partition occurrences for model evaluation
+
+We will use the leave-one-out model evaluation method (also known as the "jackknife" partition), which is appropriate for small sample sizes [@shcheglovitova2013]. Under the "Partition Occs" component, please select the "Non-spatial partition" module. Then select the "Jackknife" option and click "Partition". You will see that each partition group (in this case, each occurrence point) has a different color.
+
+```{r wallace-part, echo=FALSE, fig.cap='Jackknife partition of \\emph{Asclepsias scaposa} occurrence available in \'Partition Occurrence Data\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_4_part.png",
+                        dpi = 300)
+```
+
+## Maxent Model
+
+We are now ready to calibrate a Maxent model. Maxent can fit a range of functions to patterns in the data, from simple (i.e., straight lines) to complex (i.e., curvy or with lines that can change direction; these can get unrealistically jagged if complexity is not controlled). Here, we will fit Maxent models with the `maxnet` package [@pkg-maxnet; @phillips2017].\
+Under the "Model" component, please:
+
+1. Choose "Maxent" then "maxnet";
+2. select the "L", "LQ", and "H" feature classes (shapes for the model fit: "L" = linear, "Q" = quadratic, "H" = hinge);
+3. Select regularization multipliers between 0.5 and 4 with a step value of 0.5 (higher values penalize model complexity more);
+4. Keep "NO" selected for categorical variables and "FALSE" for Clamping. You can try setting "Parallel" to TRUE, but if there are issues, try "FALSE". Keep "Batch" unchecked.
+5. Finally Click "Run" to get several models (24 in total) that vary in their combination of feature classes and regularization multipliers. If you want more information about these methodological decisions, you can check the "Module guidance" tab.
+
+```{r wallace-mod, echo=FALSE, fig.cap='Maxent parametrization and results for \\emph{Asclepsias scaposa} in the \'Build and Evaluate Niche Model\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_5_mod.png",
+                        dpi = 300)
+```
+
+Once the models are built, you will see a table with model performance statistics (e.g., Area Under the Curve [AUC], Omission Rate [OR], Continuous Boyce Index [CBI], and corrected Akaike information criterion [AICc]) [@pkg-ENMeval]. Here, we select the model with the lowest AICc score (`fc.L_rm.1.5`) to continue our analysis. You can scroll to the right to see more metrics of model accuracy and select a particular column name to sort by. Check the guidance text to learn more about these metrics.
+
+## Visualize map
+
+To project the model onto geography, select the "L_1.5" model in the "Select model" menu below the component bar in the middle of the interface. Then, select the "Map prediction" component. Select different options to visualize your model. You have the option to visualize your model prediction on the map and also to see what the prediction looks like when it is converted to binary form (presence/absence) using a threshold.
+
+```{r wallace-vis, echo=FALSE, fig.cap='Thresholded suitability map of \\emph{Asclepsias scaposa} obtained in \'Visualize Model Results\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_6_vis.png",
+                        dpi = 300)
+```
+
+## Response curves
+
+Like the previous GLMs, the selected Maxent model also uses bio10 (temperature of the warmest quarter) as a predictor (along with bio15, precipitation seasonality). The contribution of bio10 to explain the distribution of our species makes intuitive sense because it is a desert species. `wallace` also offers the option to visualize marginal response curves, which are plots showing the model prediction over the range of a single predictor variable when all other variables are held constant. Select the "Response Curve" module and check the response curve for the predictors.
+
+```{r wallace-resp, echo=FALSE, fig.cap='Response curves of the \\emph{Asclepsias scaposa} model obtained in \'Visualize Model Results\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_7_resp.png",
+                        dpi = 300)
+```
+
+## More options in Wallace
+
+If you desire, you can continue exploring more options in `wallace` (e.g., transferring your model to other places or times). In the "Reproduce" component, you can download a Rmarkdown file that can be run as an R script to reproduce the analysis. You can also get the citations for the underlying packages used in the workflow and model metadata for your analysis (using the `rangeModelMetadata` package). If you want more information about `wallace`, please visit [wallaceecomod.github.io.](https://wallaceecomod.github.io/). To close `wallace`, press the "Shut down" button in the upper-right corner.
+
+```{r wallace-rep, echo=FALSE, fig.cap='Downloading metadata of \\emph{Asclepsias scaposa} obtained in the \'Reproduce\' component of the Wallace GUI.'}
+knitr::include_graphics("images/wallace_8_rep.png",
+                        dpi = 300)
+```
+
+
+# References
