@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Kass"
+  given-names: "Jamie M."
+  orcid: "https://orcid.org/0000-0002-9432-895X"
+- family-names: "Vignali"
+  given-names: "Sergio"
+  orcid: "https://orcid.org/0000-0002-3390-5442"
+title: "Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials"
+version: 1.0.0
+doi: 10.5281/zenodo.14000836
+date-released: 2024-10-28
+url: "https://github.com/jamiemkass/sdm-pkg-plurality-tutorials"
