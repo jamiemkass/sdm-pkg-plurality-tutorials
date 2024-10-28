@@ -8,10 +8,6 @@ There are many tools for species distribution modeling in R, so many in fact tha
 
 Jamie M. Kass, Adam B. Smith, and Dan L. Warren led the authorship of the vignettes. Sergio Vignali implemented full reproducibility of the analysis and led formatting and syntax standardization, customized plotting, bug fixing, and general management of the Github repository during development. Other vignette authors are acknowledged in the front matter of each vignette.
 
-## Citation (for all vignettes)
-
-Kass, J. M., Smith, A. B., Warren, D. L., Vignali, S., Aiello-Lammens, M. E., Arlé, E., Barbosa, A. M., Broennimann, O., Cobos, M. E., Guéguen, M., Osorio-Olvera, L., Owens, H. L., Pinilla-Buitrago, G. E., Sánchez-Tapia, A., Schmitt, S., Valavi, R., Velazco, S. J. E., Zizka, A., Zurell, D. (2024). Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials. Zenodo.
-
 ## Repository structure
 
 There are four main folders in this project:
