@@ -1,14 +1,12 @@
 # Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14000836.svg)](https://doi.org/10.5281/zenodo.14000836)
+
 There are many tools for species distribution modeling in R, so many in fact that sorting through them and deciding which to use for what can be an overwhelming exercise. This repository provides .Rmd files for the three vignettes (i.e., tutorials) and associated data as supplemental information to  [Kass et al. (2024)](https://www.doi.org/10.1111/ecog.07346) that highlight how pluralistic use of R package tools can enhance analyses. The .pdf files for the vignettes are also available on [Figshare](www.doi.org/10.6084/m9.figshare.27312903). All vignettes present full SDM analyses from data collection and processing to model building and predictions, and two of them provide walkthroughs for shiny applications. This repository also provides code and data to reproduce Figures 2 and S1 from the manuscript. This first release (1.0.0) is planned to be updated over time to adapt to new package versions.
 
 ## Project leaders
 
 Jamie M. Kass, Adam B. Smith, and Dan L. Warren led the authorship of the vignettes. Sergio Vignali implemented full reproducibility of the analysis and led formatting and syntax standardization, customized plotting, bug fixing, and general management of the Github repository during development. Other vignette authors are acknowledged in the front matter of each vignette.
-
-## Citation (for all vignettes)
-
-Kass, J. M., Smith, A. B., Warren, D. L., Vignali, S., Aiello-Lammens, M. E., Arlé, E., Barbosa, A. M., Broennimann, O., Cobos, M. E., Guéguen, M., Osorio-Olvera, L., Owens, H. L., Pinilla-Buitrago, G. E., Sánchez-Tapia, A., Schmitt, S., Valavi, R., Velazco, S. J. E., Zizka, A., Zurell, D. (2024). Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials. Zenodo.
 
 ## Repository structure
 
