@@ -1,62 +1,62 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
-- family-names: "Kass"
-  given-names: "Jamie M."
+- family-names: Kass
+  given-names: Jamie M
   orcid: "https://orcid.org/0000-0002-9432-895X"
-- family-name: "Smith"
-  given-name: "Adam B."
+- family-names: Smith
+  given-names: Adam B
   orcid: "https://orcid.org/0000-0002-6420-1659"
-- family-name: "Warren"
-  given-name: "Dan L."
+- family-names: Warren
+  given-names: Dan L
   orcid: "https://orcid.org/0000-0002-8747-2451"
-- family-names: "Vignali"
-  given-names: "Sergio"
+- family-names: Vignali
+  given-names: Sergio
   orcid: "https://orcid.org/0000-0002-3390-5442"
-- family-name: "Aiello-Lammens"
-  given-name: "Matthew E."
+- family-names: Aiello-Lammens
+  given-names: Matthew E
   orcid: "https://orcid.org/0000-0002-6180-5959"
-- family-name: "Arlé"
-  given-name: "Eduardo"
+- family-names: Arlé
+  given-names: Eduardo
   orcid: "https://orcid.org/0000-0003-4776-6161"
-- family-name: "Barbosa"
-  given-name: "A. Márcia"
+- family-names: Barbosa
+  given-names: A Márcia
   orcid: "https://orcid.org/0000-0001-9591-4531"
-- family-name: "Broennimann"
-  given-name: "Olivier"
+- family-names: Broennimann
+  given-names: Olivier
   orcid: "https://orcid.org/0000-0001-9913-3695"
-- family-name: "Cobos"
-  given-name: "Marlon"
+- family-names: Cobos
+  given-names: Marlon
   orcid: "https://orcid.org/0000-0002-2611-1767"
-- family-name: "Guéguen"
-  given-name: "Maya"
+- family-names: Guéguen
+  given-names: Maya
   orcid: "https://orcid.org/0000-0002-1045-2997"
-- family-name: "Osorio-Olvera"
-  given-name: "Luis"
+- family-names: Osorio-Olvera
+  given-names: Luis
   orcid: "https://orcid.org/0000-0003-0701-5398"
-- family-name: "Owens"
-  given-name: "Hannah L."
+- family-names: Owens
+  given-names: Hannah L
   orcid: "https://orcid.org/0000-0003-0071-1745"
-- family-name: "Pinilla-Buitrago"
-  given-name: "Gonzalo E."
+- family-names: Pinilla-Buitrago
+  given-names: Gonzalo E
   orcid: "https://orcid.org/0000-0002-0065-945X"
-- family-name: "Sánchez-Tapia"
-  given-name: "Andrea"
+- family-names: Sánchez-Tapia
+  given-names: Andrea
   orcid: "https://orcid.org/0000-0002-3521-4338"
-- family-name: "Schmitt"
-  given-name: "Sylvain"
+- family-names: Schmitt
+  given-names: Sylvain
   orcid: "https://orcid.org/0000-0001-7759-7106"
-- family-name: "Valavi"
-  given-name: "Roozbeh"
+- family-names: Valavi
+  given-names: Roozbeh
   orcid: "https://orcid.org/0000-0003-2495-5277"
-- family-name: "Velazco"
-  given-name: "Santiago J. E."
+- family-names: Velazco
+  given-names: Santiago J E
   orcid: "https://orcid.org/0000-0002-7527-0967"
-- family-name: "Zizka"
-  given-name: "Alexander"
+- family-names: Zizka
+  given-names: Alexander
   orcid: "https://orcid.org/0000-0002-1680-9192"
-- family-name: "Zurell"
-  given-name: "Damaris"
+- family-names: Zurell
+  given-names: Damaris
   orcid: "https://orcid.org/0000-0002-4628-3558"
 title: "Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials"
 version: 1.0.0
