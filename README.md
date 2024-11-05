@@ -1,8 +1,6 @@
 # Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14000836.svg)](https://doi.org/10.5281/zenodo.14000836)
-
-There are many tools for species distribution modeling in R, so many in fact that sorting through them and deciding which to use for what can be an overwhelming exercise. This repository provides .Rmd files for the three vignettes (i.e., tutorials) and associated data as supplemental information to  [Kass et al. (2024)](https://www.doi.org/10.1111/ecog.07346) that highlight how pluralistic use of R package tools can enhance analyses. The .pdf files for the vignettes are also available on [Figshare](www.doi.org/10.6084/m9.figshare.27312903). All vignettes present full SDM analyses from data collection and processing to model building and predictions, and two of them provide walkthroughs for shiny applications. This repository also provides code and data to reproduce Figures 2 and S1 from the manuscript. This first release (1.0.0) is planned to be updated over time to adapt to new package versions.
+There are many tools for species distribution modeling in R, so many in fact that sorting through them and deciding which to use for what can be an overwhelming exercise. This repository provides .Rmd files for the three vignettes (i.e., tutorials) and associated data as supplemental information to  [Kass et al. (2024)](https://doi.org/10.1111/ecog.07346) that highlight how pluralistic use of R package tools can enhance analyses. The .pdf files for the vignettes are also available on [Figshare](https://doi.org/10.6084/m9.figshare.27312903.v1). All vignettes present full SDM analyses from data collection and processing to model building and predictions, and two of them provide walkthroughs for shiny applications. This repository also provides code and data to reproduce Figures 2 and S1 from the manuscript. This first release (1.0.0) is planned to be updated over time to adapt to new package versions.
 
 ## Project leaders
 
@@ -50,7 +48,7 @@ Some of these packages use `terra` objects, while others still use `raster` obje
 
 ## Install packages
 
-The project uses `renv` to track package versions and create a project library. To recreate the same project library used to compile the vignettes of [Kass et al. 2024](www.doi.org/10.1111/ecog.07346), run the following command:
+The project uses `renv` to track package versions and create a project library. To recreate the same project library used to compile the vignettes of [Kass et al. 2024](https://doi.org/10.1111/ecog.07346), run the following command:
 
 ```r
 renv::restore()
@@ -86,7 +84,7 @@ To avoid having to install all the required packages on your computer, we provid
 
 3. Start RStudio server: in your web browser, go to `localhost:8787`. You will have to enter a username and password. The username is `rstudio` while the password is the one you used in step 2.
 
-Now everything is set up. You can open the RMarkdown files in the `vignettes` folder and run the steps interactively, or alternatively knit the .pdf file to reproduce the same output in [Figshare](www.doi.org/10.6084/m9.figshare.27312903). To stop the container, go to the Terminal window running the process and press <kbd>Ctrl</kbd> + <kbd>C</kbd>.
+Now everything is set up. You can open the RMarkdown files in the `vignettes` folder and run the steps interactively, or alternatively knit the .pdf file to reproduce the same output in [Figshare](https://doi.org/10.6084/m9.figshare.27312903.v1). To stop the container, go to the Terminal window running the process and press <kbd>Ctrl</kbd> + <kbd>C</kbd>.
 
 ## Troubleshooting
 
