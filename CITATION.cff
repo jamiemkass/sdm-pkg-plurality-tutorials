@@ -4,60 +4,79 @@ authors:
 - family-names: Kass
   given-names: Jamie M
   orcid: "https://orcid.org/0000-0002-9432-895X"
+  affiliation: "Tohoku University; Okinawa Institute of Science and Technology Graduate University"
 - family-names: Smith
   given-names: Adam B
   orcid: "https://orcid.org/0000-0002-6420-1659"
+  affiliation: "Missouri Botanical Garden"
 - family-names: Warren
   given-names: Dan L
   orcid: "https://orcid.org/0000-0002-8747-2451"
+  affiliation: "Okinawa Institute of Science and Technology Graduate University; Gulbali Institute"
 - family-names: Vignali
   given-names: Sergio
   orcid: "https://orcid.org/0000-0002-3390-5442"
+  affiliation: "University of Bern"
 - family-names: Aiello-Lammens
   given-names: Matthew E
   orcid: "https://orcid.org/0000-0002-6180-5959"
+  affiliation: "Pace University"
 - family-names: Arlé
   given-names: Eduardo
   orcid: "https://orcid.org/0000-0003-4776-6161"
+  affiliation: "Tel Aviv University; University of Leipzig"
 - family-names: Barbosa
   given-names: A Márcia
   orcid: "https://orcid.org/0000-0001-9591-4531"
+  affiliation: "Porto University"
 - family-names: Broennimann
   given-names: Olivier
   orcid: "https://orcid.org/0000-0001-9913-3695"
+  affiliation: "University of Lausanne"
 - family-names: Cobos
   given-names: Marlon
   orcid: "https://orcid.org/0000-0002-2611-1767"
+  affiliation: "University of Kansas"
 - family-names: Guéguen
   given-names: Maya
   orcid: "https://orcid.org/0000-0002-1045-2997"
+  affiliation: "Univ. Savoie Mont Blanc"
 - family-names: Osorio-Olvera
   given-names: Luis
   orcid: "https://orcid.org/0000-0003-0701-5398"
+  affiliation: "Universidad Nacional Autónoma de México; CONAHCyT"
 - family-names: Owens
   given-names: Hannah L
   orcid: "https://orcid.org/0000-0003-0071-1745"
+  affiliation: "University of Copenhagen; University of Florida"
 - family-names: Pinilla-Buitrago
   given-names: Gonzalo E
   orcid: "https://orcid.org/0000-0002-0065-945X"
+  affiliation: "City University of New York"
 - family-names: Sánchez-Tapia
   given-names: Andrea
   orcid: "https://orcid.org/0000-0002-3521-4338"
+  affiliation: "Instituto de Pesquisas Jardim Botânico do Rio de Janeiro"
 - family-names: Schmitt
   given-names: Sylvain
   orcid: "https://orcid.org/0000-0001-7759-7106"
+  affiliation: "CIRAD; Univ Montpellier"
 - family-names: Valavi
   given-names: Roozbeh
   orcid: "https://orcid.org/0000-0003-2495-5277"
+  affiliation: "CSIRO Environment"
 - family-names: Velazco
   given-names: Santiago J E
   orcid: "https://orcid.org/0000-0002-7527-0967"
+  affiliation: "Universidad Nacional de Misiones; San Diego State University"
 - family-names: Zizka
   given-names: Alexander
   orcid: "https://orcid.org/0000-0002-1680-9192"
+  affiliation: "Philipps-University Marburg"
 - family-names: Zurell
   given-names: Damaris
   orcid: "https://orcid.org/0000-0002-4628-3558"
+  affiliation: "University of Potsdam"
 title: "Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials"
 version: 1.0.0
 doi: 10.5281/zenodo.14000836
