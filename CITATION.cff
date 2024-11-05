@@ -79,6 +79,5 @@ authors:
   affiliation: "University of Potsdam"
 title: "Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials"
 version: 1.0.0
-doi: 10.5281/zenodo.14000836
 date-released: 2024-11-05
 url: "https://github.com/jamiemkass/sdm-pkg-plurality-tutorials"
