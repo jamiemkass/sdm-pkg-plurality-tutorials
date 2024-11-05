@@ -1,5 +1,5 @@
 # This code reproduces Figures 2 and S1 from Kass et al. 2024
-# (www.doi.org/10.1111/ecog.07346). The final versions for the manuscript were
+# (https://doi.org/10.1111/ecog.07346). The final versions for the manuscript were
 # edited in Adobe Illustrator.
 
 library(ggplot2)
