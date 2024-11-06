@@ -24,7 +24,7 @@ authors:
 - family-names: Arlé
   given-names: Eduardo
   orcid: "https://orcid.org/0000-0003-4776-6161"
-  affiliation: "Tel Aviv University; University of Leipzig"
+  affiliation: "Tel Aviv University; iDiv"
 - family-names: Barbosa
   given-names: A Márcia
   orcid: "https://orcid.org/0000-0001-9591-4531"
@@ -78,6 +78,7 @@ authors:
   orcid: "https://orcid.org/0000-0002-4628-3558"
   affiliation: "University of Potsdam"
 title: "Achieving higher standards in species distribution modeling by leveraging the diversity of available software: tutorials"
-version: 1.0.0
-date-released: 2024-11-05
+version: 1.0.1
+date-released: 2024-11-06
+doi: 10.5281/zenodo.14000835
 url: "https://github.com/jamiemkass/sdm-pkg-plurality-tutorials"
